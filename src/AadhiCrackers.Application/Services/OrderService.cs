@@ -303,7 +303,7 @@ public class OrderService : IOrderService
                 }
             }
         }
-        else if (request.NewStatus is OrderStatus.Shipped or OrderStatus.Delivered && oldStatus is not (OrderStatus.Shipped or OrderStatus.Delivered))
+        else if (request.NewStatus is OrderStatus.Shipped or OrderStatus.Delivered && oldStatus is not (OrderStatus.Shipped or OrderStatus.OutForDelivery or OrderStatus.Delivered))
         {
             // Fulfill reserved stock into permanent deduction
             var productIds = order.Items.Select(i => i.ProductId).ToList();
@@ -339,6 +339,45 @@ public class OrderService : IOrderService
                             ReferenceType = "OrderShipped",
                             ReferenceId = order.OrderNumber,
                             Reason = $"Deducted on-hand stock for fulfilled Order #{order.OrderNumber}"
+                        });
+                    }
+                }
+            }
+        }
+        else if (request.NewStatus == OrderStatus.Returned && oldStatus is (OrderStatus.Shipped or OrderStatus.OutForDelivery or OrderStatus.Delivered))
+        {
+            // Restock items upon return
+            var productIds = order.Items.Select(i => i.ProductId).ToList();
+            var products = await _context.Products.Where(p => productIds.Contains(p.Id)).ToListAsync(cancellationToken);
+
+            foreach (var item in order.Items)
+            {
+                var prod = products.FirstOrDefault(p => p.Id == item.ProductId);
+                if (prod != null)
+                {
+                    var before = prod.StockQuantity;
+                    prod.StockQuantity += item.Quantity;
+
+                    if (order.WarehouseId.HasValue)
+                    {
+                        var stockItem = await _context.StockItems
+                            .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.WarehouseId == order.WarehouseId.Value, cancellationToken);
+                        if (stockItem != null)
+                        {
+                            stockItem.QuantityOnHand += item.Quantity;
+                        }
+
+                        _context.StockMovements.Add(new StockMovement
+                        {
+                            ProductId = item.ProductId,
+                            WarehouseId = order.WarehouseId.Value,
+                            MovementType = StockMovementType.Adjustment,
+                            QuantityChange = item.Quantity,
+                            QuantityBefore = before,
+                            QuantityAfter = prod.StockQuantity,
+                            ReferenceType = "OrderReturn",
+                            ReferenceId = order.OrderNumber,
+                            Reason = $"Restocked items for returned Order #{order.OrderNumber}"
                         });
                     }
                 }
@@ -514,27 +553,30 @@ public class OrderService : IOrderService
             order.ChangeStatus(OrderStatus.Confirmed, "Payment verified by Admin", order.PaymentVerifiedBy);
         }
 
-        // Create Payment record
-        var payment = new Payment
+        // Create Payment record if not already paid
+        if (oldPaymentStatus != PaymentStatus.Paid)
         {
-            OrderId = order.Id,
-            CustomerId = order.CustomerId,
-            PaymentNumber = $"PAY-{DateTime.UtcNow:yyyy}-{Random.Shared.Next(100000, 999999)}",
-            Amount = order.GrandTotal,
-            PaymentMethod = PaymentMethod.UPI,
-            PaymentStatus = PaymentStatus.Paid,
-            TransactionReference = order.UtrNumber ?? "UPI-QR",
-            Notes = $"Verified by {order.PaymentVerifiedBy}",
-            PaidAtUtc = DateTime.UtcNow
-        };
-        _context.Payments.Add(payment);
+            var payment = new Payment
+            {
+                OrderId = order.Id,
+                CustomerId = order.CustomerId,
+                PaymentNumber = $"PAY-{DateTime.UtcNow:yyyy}-{Random.Shared.Next(100000, 999999)}",
+                Amount = order.GrandTotal,
+                PaymentMethod = order.PaymentMethod,
+                PaymentStatus = PaymentStatus.Paid,
+                TransactionReference = order.UtrNumber ?? "UPI-QR",
+                Notes = $"Verified by {order.PaymentVerifiedBy}",
+                PaidAtUtc = DateTime.UtcNow
+            };
+            _context.Payments.Add(payment);
 
-        // Update invoices to Paid
-        foreach (var inv in order.Invoices)
-        {
-            inv.Status = InvoiceStatus.Paid;
-            inv.PaidAmount = inv.GrandTotal;
-            inv.BalanceAmount = Money.Zero();
+            // Update invoices to Paid
+            foreach (var inv in order.Invoices)
+            {
+                inv.Status = InvoiceStatus.Paid;
+                inv.PaidAmount = inv.GrandTotal;
+                inv.BalanceAmount = Money.Zero();
+            }
         }
 
         if (request.AutoMoveToPacking && order.CanTransitionTo(OrderStatus.Processing))
@@ -600,7 +642,7 @@ public class OrderService : IOrderService
         order.PaymentVerificationNotes = $"REJECTED: {request.Reason}";
         order.ChangeStatus(OrderStatus.Cancelled, $"Payment Proof Rejected: {request.Reason}", operatorName);
 
-        // Release reserved stock
+        // Release reserved stock at product and warehouse level
         var productIds = order.Items.Select(i => i.ProductId).ToList();
         var products = await _context.Products.Where(p => productIds.Contains(p.Id)).ToListAsync(cancellationToken);
 
@@ -610,6 +652,29 @@ public class OrderService : IOrderService
             if (prod != null)
             {
                 prod.ReservedQuantity = Math.Max(0, prod.ReservedQuantity - item.Quantity);
+            }
+
+            if (order.WarehouseId.HasValue)
+            {
+                var stockItem = await _context.StockItems
+                    .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.WarehouseId == order.WarehouseId.Value, cancellationToken);
+                if (stockItem != null)
+                {
+                    stockItem.QuantityReserved = Math.Max(0, stockItem.QuantityReserved - item.Quantity);
+                }
+
+                _context.StockMovements.Add(new StockMovement
+                {
+                    ProductId = item.ProductId,
+                    WarehouseId = order.WarehouseId.Value,
+                    MovementType = StockMovementType.Adjustment,
+                    QuantityChange = item.Quantity,
+                    QuantityBefore = prod?.StockQuantity ?? 0,
+                    QuantityAfter = prod?.StockQuantity ?? 0,
+                    ReferenceType = "PaymentRejected",
+                    ReferenceId = order.OrderNumber,
+                    Reason = $"Released reserved stock due to payment rejection for Order #{order.OrderNumber}"
+                });
             }
         }
 

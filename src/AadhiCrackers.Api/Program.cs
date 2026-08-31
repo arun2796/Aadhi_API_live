@@ -51,12 +51,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AadhiCorsPolicy", policy =>
     {
-        policy.WithOrigins(
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:3000",
-            "http://localhost:4173",
-            "https://localhost:5173")
+        policy.SetIsOriginAllowed(_ => true) // Allow localhost, LAN IPs, and frontend origins
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()
@@ -86,11 +81,12 @@ builder.Services.AddSwaggerGen(c =>
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT/Token Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
         Name = "Authorization",
         In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -133,14 +129,14 @@ using (var scope = app.Services.CreateScope())
 // 8. HTTP Middleware Pipeline
 app.UseExceptionHandler();
 
+app.UseCorrelationId();
+
 app.UseSerilogRequestLogging(options =>
 {
     options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
 });
 
-app.UseCorrelationId();
-
-if (app.Environment.IsDevelopment() || true)
+if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>

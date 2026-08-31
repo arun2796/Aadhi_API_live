@@ -31,6 +31,12 @@ public interface IApplicationDbContext
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<OutboxMessage> OutboxMessages { get; }
     DbSet<SystemSetting> SystemSettings { get; }
+    DbSet<LoginHistory> LoginHistories { get; }
+    DbSet<RateLimitLog> RateLimitLogs { get; }
+    DbSet<ProductCategory> ProductCategories { get; }
+    DbSet<ProductVariant> ProductVariants { get; }
+    DbSet<GiftBoxItem> GiftBoxItems { get; }
+    DbSet<ProductReview> ProductReviews { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
@@ -56,6 +62,8 @@ public interface IIdentityService
     Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default);
     Task<bool> UpdateUserRoleAsync(string userId, string role, CancellationToken cancellationToken = default);
     Task<bool> ToggleUserStatusAsync(string userId, bool isActive, CancellationToken cancellationToken = default);
+    Task<List<LoginHistoryDto>> GetLoginHistoryAsync(CancellationToken cancellationToken = default);
+    Task<List<RateLimitLogDto>> GetRateLimitLogsAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IFileStorageService

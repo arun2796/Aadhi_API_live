@@ -7,7 +7,9 @@ using AadhiCrackers.Contracts.Common;
 using AadhiCrackers.Contracts.Finance;
 using AadhiCrackers.Contracts.Inventory;
 using AadhiCrackers.Contracts.Orders;
+using AadhiCrackers.Domain.Entities;
 using AadhiCrackers.Domain.Enums;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -27,6 +29,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<OrderDto>>>> GetOrders(
         [FromQuery] int page = 1,
@@ -40,6 +43,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize]
     public async Task<ActionResult<ApiResponse<OrderDto>>> GetOrderById(Guid id, CancellationToken cancellationToken)
     {
         var order = await _orderService.GetOrderByIdAsync(id, cancellationToken);
@@ -49,14 +53,21 @@ public class OrdersController : ControllerBase
         return Ok(ApiResponse<OrderDto>.Ok(order, correlationId: _currentUser.CorrelationId));
     }
 
-    [HttpGet("customer/{customerId:guid}")]
-    public async Task<ActionResult<ApiResponse<List<OrderDto>>>> GetCustomerOrders(Guid customerId, CancellationToken cancellationToken)
+    [HttpGet("customer/{customerId}")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<List<OrderDto>>>> GetCustomerOrders(string customerId, CancellationToken cancellationToken)
     {
-        var orders = await _orderService.GetCustomerOrdersAsync(customerId, cancellationToken);
+        if (!Guid.TryParse(customerId, out var cid))
+        {
+            return Ok(ApiResponse<List<OrderDto>>.Ok(new List<OrderDto>(), correlationId: _currentUser.CorrelationId));
+        }
+
+        var orders = await _orderService.GetCustomerOrdersAsync(cid, cancellationToken);
         return Ok(ApiResponse<List<OrderDto>>.Ok(orders, correlationId: _currentUser.CorrelationId));
     }
 
     [HttpPost]
+    [AllowAnonymous]
     [EnableRateLimiting(RateLimitingPolicies.OrderCreate)]
     public async Task<ActionResult<ApiResponse<OrderDto>>> CreateOrder([FromBody] CreateOrderRequest request, CancellationToken cancellationToken)
     {
@@ -65,6 +76,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:guid}/status")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<OrderDto>>> UpdateOrderStatus(Guid id, [FromBody] UpdateOrderStatusRequest request, CancellationToken cancellationToken)
     {
@@ -73,22 +85,25 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/verify-payment")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<OrderDto>>> VerifyPayment(Guid id, [FromBody] VerifyPaymentRequest request, CancellationToken cancellationToken)
     {
         var order = await _orderService.VerifyPaymentAsync(id, request, cancellationToken);
-        return Ok(ApiResponse<OrderDto>.Ok(order, "Payment proof verified and order confirmed successfully", _currentUser.CorrelationId));
+        return Ok(ApiResponse<OrderDto>.Ok(order, "Payment verified and order confirmed successfully", _currentUser.CorrelationId));
     }
 
     [HttpPost("{id:guid}/move-to-packing")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<OrderDto>>> MoveToPacking(Guid id, CancellationToken cancellationToken)
     {
         var order = await _orderService.MoveToPackingAsync(id, cancellationToken);
-        return Ok(ApiResponse<OrderDto>.Ok(order, "Order moved to packing station", _currentUser.CorrelationId));
+        return Ok(ApiResponse<OrderDto>.Ok(order, "Order status moved to packing station", _currentUser.CorrelationId));
     }
 
     [HttpPost("{id:guid}/reject-payment")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<OrderDto>>> RejectPayment(Guid id, [FromBody] RejectPaymentRequest request, CancellationToken cancellationToken)
     {
@@ -97,12 +112,12 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("track/{orderNumber}")]
-    [EnableRateLimiting(RateLimitingPolicies.PublicGeneral)]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<OrderTrackingDto>>> TrackOrder(string orderNumber, CancellationToken cancellationToken)
     {
         var tracking = await _orderService.TrackOrderAsync(orderNumber, cancellationToken);
         if (tracking == null)
-            return NotFound(ApiResponse<OrderTrackingDto>.Fail($"No order found for '{orderNumber}'", _currentUser.CorrelationId));
+            return NotFound(ApiResponse<OrderTrackingDto>.Fail($"Tracking information for '{orderNumber}' not found", _currentUser.CorrelationId));
 
         return Ok(ApiResponse<OrderTrackingDto>.Ok(tracking, correlationId: _currentUser.CorrelationId));
     }
@@ -122,6 +137,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("warehouses")]
+    [Authorize(Policy = "RequireInventoryManager")]
     public async Task<ActionResult<ApiResponse<List<WarehouseDto>>>> GetWarehouses(CancellationToken cancellationToken)
     {
         var list = await _inventoryService.GetWarehousesAsync(cancellationToken);
@@ -129,6 +145,8 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("stock")]
+    [HttpGet("stock-items")]
+    [Authorize(Policy = "RequireInventoryManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<StockItemDto>>>> GetStock(
         [FromQuery] Guid? warehouseId = null,
@@ -143,6 +161,8 @@ public class InventoryController : ControllerBase
     }
 
     [HttpPost("adjustments")]
+    [HttpPost("adjust")]
+    [Authorize(Policy = "RequireInventoryManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<StockItemDto>>> AdjustStock([FromBody] StockAdjustmentRequest request, CancellationToken cancellationToken)
     {
@@ -151,6 +171,8 @@ public class InventoryController : ControllerBase
     }
 
     [HttpPost("transfers")]
+    [HttpPost("transfer")]
+    [Authorize(Policy = "RequireInventoryManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<bool>>> TransferStock([FromBody] StockTransferRequest request, CancellationToken cancellationToken)
     {
@@ -159,6 +181,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("movements")]
+    [Authorize(Policy = "RequireInventoryManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<StockMovementDto>>>> GetMovements(
         [FromQuery] Guid? productId = null,
@@ -172,6 +195,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("low-stock")]
+    [Authorize(Policy = "RequireInventoryManager")]
     public async Task<ActionResult<ApiResponse<List<LowStockAlertDto>>>> GetLowStockAlerts([FromQuery] int limit = 10, CancellationToken cancellationToken = default)
     {
         var alerts = await _inventoryService.GetLowStockAlertsAsync(limit, cancellationToken);
@@ -193,6 +217,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet("suppliers")]
+    [Authorize(Policy = "RequirePurchaseManager")]
     public async Task<ActionResult<ApiResponse<List<SupplierDto>>>> GetSuppliers(CancellationToken cancellationToken)
     {
         var suppliers = await _purchaseService.GetSuppliersAsync(cancellationToken);
@@ -200,6 +225,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPost("suppliers")]
+    [Authorize(Policy = "RequirePurchaseManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<SupplierDto>>> CreateSupplier([FromBody] CreateSupplierRequest request, CancellationToken cancellationToken)
     {
@@ -208,6 +234,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequirePurchaseManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<PurchaseOrderDto>>>> GetPurchaseOrders(
         [FromQuery] int page = 1,
@@ -219,6 +246,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequirePurchaseManager")]
     public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> GetPurchaseOrderById(Guid id, CancellationToken cancellationToken)
     {
         var po = await _purchaseService.GetPurchaseOrderByIdAsync(id, cancellationToken);
@@ -229,6 +257,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequirePurchaseManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> CreatePurchaseOrder([FromBody] CreatePurchaseOrderRequest request, CancellationToken cancellationToken)
     {
@@ -237,6 +266,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPost("goods-receipts")]
+    [Authorize(Policy = "RequirePurchaseManager")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<GoodsReceiptDto>>> CreateGoodsReceipt([FromBody] CreateGoodsReceiptRequest request, CancellationToken cancellationToken)
     {
@@ -259,6 +289,7 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<InvoiceDto>>>> GetInvoices(
         [FromQuery] int page = 1,
@@ -285,6 +316,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<PaymentDto>>>> GetPayments(
         [FromQuery] int page = 1,
@@ -296,6 +328,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PaymentDto>>> CreatePayment([FromBody] CreatePaymentRequest request, CancellationToken cancellationToken)
     {
@@ -318,6 +351,7 @@ public class ExpensesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<PagedResult<ExpenseDto>>>> GetExpenses(
         [FromQuery] int page = 1,
@@ -330,11 +364,69 @@ public class ExpensesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<ExpenseDto>>> CreateExpense([FromBody] CreateExpenseRequest request, CancellationToken cancellationToken)
     {
         var expense = await _financeService.CreateExpenseAsync(request, cancellationToken);
         return Ok(ApiResponse<ExpenseDto>.Ok(expense, "Expense recorded successfully", _currentUser.CorrelationId));
+    }
+}
+
+[ApiController]
+[Route("api/v1/finance")]
+public class FinanceController : ControllerBase
+{
+    private readonly IFinanceService _financeService;
+    private readonly ICurrentUserService _currentUser;
+
+    public FinanceController(IFinanceService financeService, ICurrentUserService currentUser)
+    {
+        _financeService = financeService;
+        _currentUser = currentUser;
+    }
+
+    [HttpGet("invoices")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<PagedResult<InvoiceDto>>>> GetInvoices(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] InvoiceStatus? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _financeService.GetInvoicesAsync(page, pageSize, status, cancellationToken);
+        return Ok(ApiResponse<PagedResult<InvoiceDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpGet("expenses")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<PagedResult<ExpenseDto>>>> GetExpenses(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] ExpenseCategory? category = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _financeService.GetExpensesAsync(page, pageSize, category, cancellationToken);
+        return Ok(ApiResponse<PagedResult<ExpenseDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpPost("expenses")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<ExpenseDto>>> CreateExpense([FromBody] CreateExpenseRequest request, CancellationToken cancellationToken)
+    {
+        var expense = await _financeService.CreateExpenseAsync(request, cancellationToken);
+        return Ok(ApiResponse<ExpenseDto>.Ok(expense, "Expense recorded successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpGet("payments")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<PagedResult<PaymentDto>>>> GetPayments(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _financeService.GetPaymentsAsync(page, pageSize, cancellationToken);
+        return Ok(ApiResponse<PagedResult<PaymentDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
     }
 }
 
@@ -356,14 +448,18 @@ public class ReportsController : ControllerBase
         _currentUser = currentUser;
     }
 
+    [HttpGet("dashboard")]
     [HttpGet("dashboard-kpis")]
+    [Authorize(Policy = "RequireStaff")]
     public async Task<ActionResult<ApiResponse<DashboardKpiDto>>> GetDashboardKpis(CancellationToken cancellationToken)
     {
         var kpis = await _reportService.GetDashboardKpisAsync(cancellationToken);
         return Ok(ApiResponse<DashboardKpiDto>.Ok(kpis, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpGet("sales-trend")]
     [HttpGet("sales-overview")]
+    [Authorize(Policy = "RequireStaff")]
     [EnableRateLimiting(RateLimitingPolicies.Reports)]
     public async Task<ActionResult<ApiResponse<SalesReportDto>>> GetSalesOverview([FromQuery] string period = "month", CancellationToken cancellationToken = default)
     {
@@ -371,7 +467,9 @@ public class ReportsController : ControllerBase
         return Ok(ApiResponse<SalesReportDto>.Ok(report, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpGet("category-breakdown")]
     [HttpGet("top-categories")]
+    [Authorize(Policy = "RequireStaff")]
     public async Task<ActionResult<ApiResponse<List<CategorySalesDto>>>> GetTopCategories(CancellationToken cancellationToken)
     {
         var categories = await _reportService.GetTopSellingCategoriesAsync(cancellationToken);
@@ -379,6 +477,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("top-products")]
+    [Authorize(Policy = "RequireStaff")]
     public async Task<ActionResult<ApiResponse<List<TopProductDto>>>> GetTopProducts([FromQuery] int limit = 5, CancellationToken cancellationToken = default)
     {
         var products = await _reportService.GetTopSellingProductsAsync(limit, cancellationToken);
@@ -386,6 +485,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("payment-methods")]
+    [Authorize(Policy = "RequireStaff")]
     public async Task<ActionResult<ApiResponse<List<PaymentMethodReportDto>>>> GetPaymentMethods(CancellationToken cancellationToken)
     {
         var methods = await _reportService.GetSalesByPaymentMethodAsync(cancellationToken);
@@ -393,6 +493,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("profit-loss")]
+    [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.Reports)]
     public async Task<ActionResult<ApiResponse<ProfitLossDto>>> GetProfitLoss(
         [FromQuery] DateTime? fromDate = null,
@@ -404,6 +505,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("export/{reportType}")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.Reports)]
     public async Task<IActionResult> ExportCsv(
         string reportType,
@@ -430,6 +532,7 @@ public class AuditLogsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AuditSearch)]
     public async Task<ActionResult<ApiResponse<PagedResult<AuditLogDto>>>> GetAuditLogs([FromQuery] AuditLogFilterRequest filter, CancellationToken cancellationToken)
     {
@@ -438,6 +541,7 @@ public class AuditLogsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AuditSearch)]
     public async Task<ActionResult<ApiResponse<AuditLogDetailDto>>> GetAuditLogById(Guid id, CancellationToken cancellationToken)
     {
@@ -463,17 +567,18 @@ public class SettingsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<List<Contracts.Audit.SystemSettingDto>>>> GetSettings([FromQuery] string? group = null, CancellationToken cancellationToken = default)
+    [Authorize(Policy = "RequireAdmin")]
+    public async Task<ActionResult<ApiResponse<List<SystemSettingDto>>>> GetSettings([FromQuery] string? group = null, CancellationToken cancellationToken = default)
     {
-        var list = await _settingsService.GetSettingsAsync(group, cancellationToken);
-        return Ok(ApiResponse<List<Contracts.Audit.SystemSettingDto>>.Ok(list, correlationId: _currentUser.CorrelationId));
+        var settings = await _settingsService.GetSettingsAsync(group, cancellationToken);
+        return Ok(ApiResponse<List<SystemSettingDto>>.Ok(settings, correlationId: _currentUser.CorrelationId));
     }
 
-    [HttpPut]
-    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdateSetting([FromBody] Contracts.Audit.UpdateSettingRequest request, CancellationToken cancellationToken)
+    [HttpPut("{key}")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateSetting(string key, [FromBody] string value, CancellationToken cancellationToken)
     {
-        var success = await _settingsService.UpdateSettingAsync(request.Key, request.Value, cancellationToken);
+        var success = await _settingsService.UpdateSettingAsync(key, value, cancellationToken);
         return Ok(ApiResponse<bool>.Ok(success, "Setting updated successfully", _currentUser.CorrelationId));
     }
 }
@@ -492,17 +597,10 @@ public class SearchController : ControllerBase
     }
 
     [HttpGet]
-    [EnableRateLimiting(RateLimitingPolicies.ProductSearch)]
-    public async Task<ActionResult<ApiResponse<PagedResult<ProductDto>>>> Search(
-        [FromQuery] string q,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20,
-        CancellationToken cancellationToken = default)
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<PagedResult<ProductDto>>>> Search([FromQuery] string q, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(q))
-            return Ok(ApiResponse<PagedResult<ProductDto>>.Ok(new PagedResult<ProductDto>(), correlationId: _currentUser.CorrelationId));
-
-        var result = await _searchService.SearchProductsAsync(q, page, pageSize, cancellationToken);
-        return Ok(ApiResponse<PagedResult<ProductDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+        var results = await _searchService.SearchProductsAsync(q, page, pageSize, cancellationToken);
+        return Ok(ApiResponse<PagedResult<ProductDto>>.Ok(results, correlationId: _currentUser.CorrelationId));
     }
 }

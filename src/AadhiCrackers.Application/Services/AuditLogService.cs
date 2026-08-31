@@ -110,6 +110,15 @@ public class AuditLogService : IAuditLogService
             Severity = audit.Severity.ToString(),
             audit.Success
         }, cancellationToken);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            // Do not break main business execution if audit save encounters transient DB issue
+        }
     }
 
     public async Task<PagedResult<AuditLogDto>> GetAuditLogsAsync(AuditLogFilterRequest filter, CancellationToken cancellationToken = default)
@@ -220,8 +229,14 @@ public class AuditLogService : IAuditLogService
         };
     }
 
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles,
+        WriteIndented = false
+    };
+
     private static string? Serialize(object? obj) =>
-        obj is null ? null : (obj is string str ? str : JsonSerializer.Serialize(obj));
+        obj is null ? null : (obj is string str ? str : JsonSerializer.Serialize(obj, JsonOptions));
 
     private static string? MaskJson(string? json)
     {

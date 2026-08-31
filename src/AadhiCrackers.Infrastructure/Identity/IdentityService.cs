@@ -1,8 +1,13 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Contracts.Auth;
 using AadhiCrackers.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
 
 namespace AadhiCrackers.Infrastructure.Identity;
 
@@ -12,17 +17,20 @@ public class IdentityService : IIdentityService
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly RoleManager<ApplicationRole> _roleManager;
     private readonly IApplicationDbContext _context;
+    private readonly IConfiguration _configuration;
 
     public IdentityService(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         RoleManager<ApplicationRole> roleManager,
-        IApplicationDbContext context)
+        IApplicationDbContext context,
+        IConfiguration configuration)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _roleManager = roleManager;
         _context = context;
+        _configuration = configuration;
     }
 
     public async Task<AuthResponse> AuthenticateAsync(LoginRequest request, CancellationToken cancellationToken = default)
@@ -39,6 +47,22 @@ public class IdentityService : IIdentityService
         }
 
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
+        
+        // Record Login History
+        try
+        {
+            _context.LoginHistories.Add(new LoginHistory
+            {
+                UserId = user.Id,
+                Email = request.Email,
+                TimestampUtc = DateTime.UtcNow,
+                Success = result.Succeeded,
+                FailureReason = result.Succeeded ? null : (result.IsLockedOut ? "Account is locked out" : "Invalid password")
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch { /* non-blocking audit */ }
+
         if (!result.Succeeded)
         {
             if (result.IsLockedOut)
@@ -52,8 +76,9 @@ public class IdentityService : IIdentityService
 
         var roles = await _userManager.GetRolesAsync(user);
         var role = roles.FirstOrDefault() ?? AppRoles.Customer;
-
         var permissions = GetPermissionsForRole(role);
+
+        var token = GenerateJwtToken(user, role, permissions);
 
         var userDto = new UserDto
         {
@@ -72,7 +97,7 @@ public class IdentityService : IIdentityService
             Success = true,
             Message = "Login successful",
             User = userDto,
-            Token = Guid.NewGuid().ToString("N") // Session token
+            Token = token
         };
     }
 
@@ -110,18 +135,32 @@ public class IdentityService : IIdentityService
         await _userManager.AddToRoleAsync(user, AppRoles.Customer);
 
         // Create linked Customer entity in business database
-        var customer = new Customer
+        var existingCustomer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == user.Email, cancellationToken);
+        if (existingCustomer != null)
         {
-            UserId = user.Id,
-            CustomerCode = customerCode,
-            FirstName = user.FirstName,
-            LastName = user.LastName,
-            Email = user.Email,
-            Phone = user.PhoneNumber,
-            IsActive = true
-        };
-        _context.Customers.Add(customer);
+            existingCustomer.UserId = user.Id;
+            existingCustomer.FirstName = user.FirstName;
+            existingCustomer.LastName = user.LastName;
+            existingCustomer.Phone = user.PhoneNumber;
+        }
+        else
+        {
+            var customer = new Customer
+            {
+                UserId = user.Id,
+                CustomerCode = customerCode,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Email = user.Email,
+                Phone = user.PhoneNumber,
+                IsActive = true
+            };
+            _context.Customers.Add(customer);
+        }
         await _context.SaveChangesAsync(cancellationToken);
+
+        var permissions = GetPermissionsForRole(AppRoles.Customer);
+        var token = GenerateJwtToken(user, AppRoles.Customer, permissions);
 
         var userDto = new UserDto
         {
@@ -131,7 +170,7 @@ public class IdentityService : IIdentityService
             LastName = user.LastName,
             Phone = user.PhoneNumber,
             Role = AppRoles.Customer,
-            Permissions = GetPermissionsForRole(AppRoles.Customer),
+            Permissions = permissions,
             IsActive = true
         };
 
@@ -140,7 +179,7 @@ public class IdentityService : IIdentityService
             Success = true,
             Message = "Registration successful",
             User = userDto,
-            Token = Guid.NewGuid().ToString("N")
+            Token = token
         };
     }
 
@@ -202,14 +241,20 @@ public class IdentityService : IIdentityService
 
     public async Task<bool> UpdateUserRoleAsync(string userId, string role, CancellationToken cancellationToken = default)
     {
+        var validRoles = new[] { AppRoles.SuperAdmin, AppRoles.Admin, AppRoles.InventoryManager, AppRoles.SalesExecutive, AppRoles.Accountant, AppRoles.Customer };
+        if (!validRoles.Contains(role))
+        {
+            return false;
+        }
+
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return false;
 
         var currentRoles = await _userManager.GetRolesAsync(user);
         await _userManager.RemoveFromRolesAsync(user, currentRoles);
-        await _userManager.AddToRoleAsync(user, role);
+        var result = await _userManager.AddToRoleAsync(user, role);
 
-        return true;
+        return result.Succeeded;
     }
 
     public async Task<bool> ToggleUserStatusAsync(string userId, bool isActive, CancellationToken cancellationToken = default)
@@ -220,6 +265,83 @@ public class IdentityService : IIdentityService
         user.IsActive = isActive;
         var result = await _userManager.UpdateAsync(user);
         return result.Succeeded;
+    }
+
+    public async Task<List<LoginHistoryDto>> GetLoginHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.LoginHistories
+            .OrderByDescending(h => h.TimestampUtc)
+            .Take(100)
+            .Select(h => new LoginHistoryDto
+            {
+                Id = h.Id,
+                UserId = h.UserId,
+                Email = h.Email,
+                TimestampUtc = h.TimestampUtc,
+                IpAddress = h.IpAddress,
+                UserAgent = h.UserAgent,
+                Success = h.Success,
+                FailureReason = h.FailureReason
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<List<RateLimitLogDto>> GetRateLimitLogsAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.RateLimitLogs
+            .OrderByDescending(r => r.TimestampUtc)
+            .Take(100)
+            .Select(r => new RateLimitLogDto
+            {
+                Id = r.Id,
+                TimestampUtc = r.TimestampUtc,
+                Endpoint = r.Endpoint,
+                Policy = r.Policy,
+                IpAddress = r.IpAddress,
+                RequestsCount = r.RequestsCount,
+                BlockedCount = r.BlockedCount,
+                Reason = r.Reason
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+
+    private string GenerateJwtToken(ApplicationUser user, string role, List<string> permissions)
+    {
+        var secretKey = _configuration["JwtSettings:SecretKey"] ?? "AadhiCrackers_Secure_Enterprise_JWT_Secret_Key_2026_!@#$999";
+        var issuer = _configuration["JwtSettings:Issuer"] ?? "AadhiCrackers.Api";
+        var audience = _configuration["JwtSettings:Audience"] ?? "AadhiCrackers.Clients";
+        var expiryMinutes = int.TryParse(_configuration["JwtSettings:ExpiryMinutes"], out var exp) ? exp : 1440; // 24 hours
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id),
+            new(ClaimTypes.Email, user.Email ?? string.Empty),
+            new(ClaimTypes.Name, $"{user.FirstName} {user.LastName}".Trim()),
+            new(ClaimTypes.Role, role),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
+        };
+
+        foreach (var perm in permissions)
+        {
+            claims.Add(new Claim("permission", perm));
+        }
+
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(claims),
+            Expires = DateTime.UtcNow.AddMinutes(expiryMinutes),
+            Issuer = issuer,
+            Audience = audience,
+            SigningCredentials = credentials
+        };
+
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
     }
 
     private static List<string> GetPermissionsForRole(string role)
@@ -261,7 +383,9 @@ public class IdentityService : IIdentityService
             },
             _ => new List<string>
             {
-                AppPermissions.ProductsRead
+                AppPermissions.ProductsRead,
+                AppPermissions.OrdersCreate,
+                AppPermissions.OrdersRead
             }
         };
     }

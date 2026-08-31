@@ -14,22 +14,18 @@ public class CurrentUserService : ICurrentUserService
 
     public string? UserId =>
         _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier) ??
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue("sub") ??
-        _httpContextAccessor.HttpContext?.Request.Headers["X-User-Id"].FirstOrDefault();
+        _httpContextAccessor.HttpContext?.User?.FindFirstValue("sub");
 
     public string? UserName =>
         _httpContextAccessor.HttpContext?.User?.Identity?.Name ??
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name) ??
-        _httpContextAccessor.HttpContext?.Request.Headers["X-User-Name"].FirstOrDefault();
+        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name);
 
     public string? Email =>
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Email) ??
-        _httpContextAccessor.HttpContext?.Request.Headers["X-User-Email"].FirstOrDefault();
+        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Email);
 
     public string? Role =>
         _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role) ??
-        _httpContextAccessor.HttpContext?.Request.Headers["X-User-Role"].FirstOrDefault() ??
-        "Customer";
+        (_httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated == true ? "Customer" : "Anonymous");
 
     public string? IpAddress =>
         _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ??

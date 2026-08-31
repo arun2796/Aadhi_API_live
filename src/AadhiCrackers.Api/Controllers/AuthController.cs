@@ -81,6 +81,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("change-password")]
+    [Authorize]
     public async Task<ActionResult<ApiResponse<bool>>> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_currentUser.UserId))
@@ -94,6 +95,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpGet("users")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<List<UserDto>>>> GetAllUsers(CancellationToken cancellationToken)
     {
@@ -102,6 +104,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPut("users/{id}/role")]
+    [Authorize(Policy = "RequireSuperAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(string id, [FromBody] string role, CancellationToken cancellationToken)
     {
@@ -110,10 +113,29 @@ public class AuthController : ControllerBase
     }
 
     [HttpPut("users/{id}/status")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<bool>>> ToggleUserStatus(string id, [FromBody] bool isActive, CancellationToken cancellationToken)
     {
         var success = await _identityService.ToggleUserStatusAsync(id, isActive, cancellationToken);
         return Ok(ApiResponse<bool>.Ok(success, "Status updated successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpGet("login-history")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<List<LoginHistoryDto>>>> GetLoginHistory(CancellationToken cancellationToken)
+    {
+        var history = await _identityService.GetLoginHistoryAsync(cancellationToken);
+        return Ok(ApiResponse<List<LoginHistoryDto>>.Ok(history, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpGet("rate-limit-logs")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<List<RateLimitLogDto>>>> GetRateLimitLogs(CancellationToken cancellationToken)
+    {
+        var logs = await _identityService.GetRateLimitLogsAsync(cancellationToken);
+        return Ok(ApiResponse<List<RateLimitLogDto>>.Ok(logs, correlationId: _currentUser.CorrelationId));
     }
 }

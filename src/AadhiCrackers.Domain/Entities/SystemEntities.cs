@@ -65,3 +65,36 @@ public class SystemSetting : BaseEntity<Guid>
         Id = Guid.NewGuid();
     }
 }
+
+public class LoginHistory : BaseEntity<Guid>
+{
+    public string? UserId { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+    public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; }
+    public bool Success { get; set; } = true;
+    public string? FailureReason { get; set; }
+
+    public LoginHistory()
+    {
+        Id = Guid.NewGuid();
+    }
+}
+
+public class RateLimitLog : BaseEntity<Guid>
+{
+    public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+    public string Endpoint { get; set; } = string.Empty;
+    public string Policy { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+    public int RequestsCount { get; set; }
+    public int BlockedCount { get; set; }
+    public string Reason { get; set; } = string.Empty;
+
+    public RateLimitLog()
+    {
+        Id = Guid.NewGuid();
+    }
+}
+

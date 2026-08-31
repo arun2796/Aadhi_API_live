@@ -35,6 +35,12 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<LoginHistory> LoginHistories => Set<LoginHistory>();
+    public DbSet<RateLimitLog> RateLimitLogs => Set<RateLimitLog>();
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
+    public DbSet<GiftBoxItem> GiftBoxItems => Set<GiftBoxItem>();
+    public DbSet<ProductReview> ProductReviews => Set<ProductReview>();
 
     public AadhiDbContext(DbContextOptions<AadhiDbContext> options) : base(options)
     {

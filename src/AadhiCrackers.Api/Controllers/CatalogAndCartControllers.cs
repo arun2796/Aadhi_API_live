@@ -4,6 +4,7 @@ using AadhiCrackers.Application.Services;
 using AadhiCrackers.Contracts.Catalog;
 using AadhiCrackers.Contracts.Common;
 using AadhiCrackers.Contracts.Orders;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -87,6 +88,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<ProductDetailDto>>> CreateProduct([FromBody] CreateProductRequest request, CancellationToken cancellationToken)
     {
@@ -95,6 +97,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<ProductDetailDto>>> UpdateProduct(Guid id, [FromBody] UpdateProductRequest request, CancellationToken cancellationToken)
     {
@@ -104,6 +107,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteProduct(Guid id, CancellationToken cancellationToken)
     {
@@ -145,6 +149,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<CategoryDto>>> CreateCategory([FromBody] CreateCategoryRequest request, CancellationToken cancellationToken)
     {
@@ -153,6 +158,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<CategoryDto>>> UpdateCategory(Guid id, [FromBody] UpdateCategoryRequest request, CancellationToken cancellationToken)
     {
@@ -162,6 +168,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteCategory(Guid id, CancellationToken cancellationToken)
     {
@@ -191,6 +198,7 @@ public class BrandsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<BrandDto>>> CreateBrand([FromBody] CreateBrandRequest request, CancellationToken cancellationToken)
     {

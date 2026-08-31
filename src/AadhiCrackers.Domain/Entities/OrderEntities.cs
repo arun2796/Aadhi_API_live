@@ -91,7 +91,7 @@ public class Order : AggregateRoot<Guid>
 
     public bool CanTransitionTo(OrderStatus nextStatus)
     {
-        if (OrderStatus == nextStatus) return true;
+        if (OrderStatus == nextStatus) return false;
 
         return OrderStatus switch
         {
