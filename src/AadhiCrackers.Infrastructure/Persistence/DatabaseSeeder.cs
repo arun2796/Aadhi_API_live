@@ -18,8 +18,6 @@ public static class DatabaseSeeder
     {
         try
         {
-            await context.Database.EnsureCreatedAsync();
-
             // 1. Seed Roles
             foreach (var roleName in AppRoles.All)
             {

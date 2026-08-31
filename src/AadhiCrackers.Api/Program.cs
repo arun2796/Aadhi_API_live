@@ -118,11 +118,13 @@ using (var scope = app.Services.CreateScope())
         var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = services.GetRequiredService<RoleManager<ApplicationRole>>();
 
+        await DatabaseInitializer.InitializeAsync(context, logger);
         await DatabaseSeeder.SeedAsync(context, userManager, roleManager, logger);
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "An error occurred while seeding the database.");
+        logger.LogCritical(ex, "An error occurred while initializing the database.");
+        throw;
     }
 }
 

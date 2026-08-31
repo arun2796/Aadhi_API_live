@@ -41,6 +41,15 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
     public DbSet<GiftBoxItem> GiftBoxItems => Set<GiftBoxItem>();
     public DbSet<ProductReview> ProductReviews => Set<ProductReview>();
+    public DbSet<Refund> Refunds => Set<Refund>();
+    public DbSet<SupplierBill> SupplierBills => Set<SupplierBill>();
+    public DbSet<ReturnOrder> ReturnOrders => Set<ReturnOrder>();
+    public DbSet<ReturnOrderItem> ReturnOrderItems => Set<ReturnOrderItem>();
+
+    public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+    {
+        return Database.BeginTransactionAsync(cancellationToken);
+    }
 
     public AadhiDbContext(DbContextOptions<AadhiDbContext> options) : base(options)
     {

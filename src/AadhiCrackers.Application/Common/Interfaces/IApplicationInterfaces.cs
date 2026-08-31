@@ -2,6 +2,7 @@ using AadhiCrackers.Contracts.Auth;
 using AadhiCrackers.Contracts.Common;
 using AadhiCrackers.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace AadhiCrackers.Application.Common.Interfaces;
 
@@ -37,8 +38,13 @@ public interface IApplicationDbContext
     DbSet<ProductVariant> ProductVariants { get; }
     DbSet<GiftBoxItem> GiftBoxItems { get; }
     DbSet<ProductReview> ProductReviews { get; }
+    DbSet<Refund> Refunds { get; }
+    DbSet<SupplierBill> SupplierBills { get; }
+    DbSet<ReturnOrder> ReturnOrders { get; }
+    DbSet<ReturnOrderItem> ReturnOrderItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+    Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ICurrentUserService
@@ -79,12 +85,17 @@ public interface INotificationService
     Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default);
 }
 
-public interface ISearchService
-{
-    Task<PagedResult<Contracts.Catalog.ProductDto>> SearchProductsAsync(string query, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
-}
-
 public interface IOutboxService
 {
     Task EnqueueAsync(string type, object payload, CancellationToken cancellationToken = default);
+}
+
+public interface IProductSearchService
+{
+    Task<PagedResult<Product>> SearchAsync(string query, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
+}
+
+public interface ISearchService
+{
+    Task<PagedResult<AadhiCrackers.Contracts.Catalog.ProductDto>> SearchProductsAsync(string query, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
 }
