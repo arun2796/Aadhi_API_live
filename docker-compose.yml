@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database (Production Provider)
+  postgres:
+    image: postgres:17-alpine
+    container_name: aadhi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aadhicrackers
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-AadhiCrackers@2026!}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis Cache & Outbox Distributed Lock
+  redis:
+    image: redis:7-alpine
+    container_name: aadhi-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 3. .NET 10 Web API Backend
+  api:
+    build:
+      context: .
+      dockerfile: src/AadhiCrackers.Api/Dockerfile
+    container_name: aadhi-api
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DatabaseProvider=PostgreSql
+      - ConnectionStrings__PostgreSqlConnection=Host=postgres;Port=5432;Database=aadhicrackers;Username=postgres;Password=${DB_PASSWORD:-AadhiCrackers@2026!}
+      - JwtSettings__SecretKey=${JWT_SECRET:-AadhiCrackersEnterpriseSuperSecret256BitKey2026!}
+    ports:
+      - "5050:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 4. Customer Mobile-First Web Frontend (Port 5173 / 80)
+  customer-web:
+    build:
+      context: ./frontend/customer-web
+      dockerfile: Dockerfile
+    container_name: aadhi-customer-web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  # 5. Admin ERP Business Suite Frontend (Port 5174 / 80)
+  admin-web:
+    build:
+      context: ./frontend/admin-web
+      dockerfile: Dockerfile
+    container_name: aadhi-admin-web
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:

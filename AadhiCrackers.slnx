@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AadhiCrackers.Api/AadhiCrackers.Api.csproj" />
+    <Project Path="src/AadhiCrackers.Application/AadhiCrackers.Application.csproj" />
+    <Project Path="src/AadhiCrackers.Contracts/AadhiCrackers.Contracts.csproj" />
+    <Project Path="src/AadhiCrackers.Domain/AadhiCrackers.Domain.csproj" />
+    <Project Path="src/AadhiCrackers.Infrastructure/AadhiCrackers.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AadhiCrackers.Api.Tests/AadhiCrackers.Api.Tests.csproj" />
+    <Project Path="tests/AadhiCrackers.Application.Tests/AadhiCrackers.Application.Tests.csproj" />
+    <Project Path="tests/AadhiCrackers.Domain.Tests/AadhiCrackers.Domain.Tests.csproj" />
+    <Project Path="tests/AadhiCrackers.Infrastructure.Tests/AadhiCrackers.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>
