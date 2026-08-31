@@ -1,4 +1,6 @@
+using System.Text.Json;
 using AadhiCrackers.Application.Common.Interfaces;
+using AadhiCrackers.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -29,6 +31,7 @@ public class OutboxProcessorBackgroundService : BackgroundService
             {
                 using var scope = _serviceProvider.CreateScope();
                 var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
                 var pendingMessages = await context.OutboxMessages
                     .Where(m => m.ProcessedOnUtc == null && m.RetryCount < 5)
@@ -44,9 +47,55 @@ public class OutboxProcessorBackgroundService : BackgroundService
                     {
                         try
                         {
-                            // Asynchronous projection / indexing / webhook simulation
-                            _logger.LogDebug("Dispatching Outbox Message [{Id}] Type={Type}", msg.Id, msg.Type);
+                            _logger.LogInformation("Dispatching Outbox Event [{Id}] Type={Type}", msg.Id, msg.Type);
 
+                            // Execute typed business handlers
+                            if (!string.IsNullOrWhiteSpace(msg.PayloadJson))
+                            {
+                                switch (msg.Type)
+                                {
+                                    case "OrderPlaced":
+                                        {
+                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            if (doc.RootElement.TryGetProperty("OrderId", out var orderIdProp) &&
+                                                Guid.TryParse(orderIdProp.GetString(), out var orderId))
+                                            {
+                                                var order = await context.Orders
+                                                    .Include(o => o.Customer)
+                                                    .Include(o => o.Items)
+                                                    .FirstOrDefaultAsync(o => o.Id == orderId, stoppingToken);
+
+                                                if (order != null)
+                                                {
+                                                    await notificationService.SendOrderConfirmationAsync(order, stoppingToken);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    case "OrderStatusChanged":
+                                        {
+                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            if (doc.RootElement.TryGetProperty("OrderId", out var orderIdProp) &&
+                                                Guid.TryParse(orderIdProp.GetString(), out var orderId))
+                                            {
+                                                var order = await context.Orders
+                                                    .Include(o => o.Customer)
+                                                    .FirstOrDefaultAsync(o => o.Id == orderId, stoppingToken);
+
+                                                if (order != null)
+                                                {
+                                                    await notificationService.SendOrderStatusUpdatedAsync(order, stoppingToken);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    default:
+                                        _logger.LogDebug("Handled general outbox message type: {Type}", msg.Type);
+                                        break;
+                                }
+                            }
+
+                            // Only mark processed after actual handler execution succeeds
                             msg.ProcessedOnUtc = DateTime.UtcNow;
                             msg.Error = null;
                         }
@@ -77,6 +126,7 @@ public class LowStockMonitorBackgroundService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<LowStockMonitorBackgroundService> _logger;
+    private readonly HashSet<Guid> _alertedProductIds = new();
 
     public LowStockMonitorBackgroundService(
         IServiceProvider serviceProvider,
@@ -102,9 +152,19 @@ public class LowStockMonitorBackgroundService : BackgroundService
                     .Where(p => !p.IsDeleted && p.IsActive && (p.StockQuantity - p.ReservedQuantity) <= p.ReorderLevel)
                     .ToListAsync(stoppingToken);
 
+                var currentLowIds = lowStockProducts.Select(p => p.Id).ToHashSet();
+
+                // Clean up recovered products from the alerted state cache
+                _alertedProductIds.RemoveWhere(id => !currentLowIds.Contains(id));
+
                 foreach (var product in lowStockProducts)
                 {
-                    await notifier.SendLowStockAlertAsync(product, product.StockQuantity - product.ReservedQuantity, stoppingToken);
+                    // Deduplicate alerts: only send when product enters low-stock state
+                    if (!_alertedProductIds.Contains(product.Id))
+                    {
+                        await notifier.SendLowStockAlertAsync(product, product.StockQuantity - product.ReservedQuantity, stoppingToken);
+                        _alertedProductIds.Add(product.Id);
+                    }
                 }
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
@@ -112,8 +172,8 @@ public class LowStockMonitorBackgroundService : BackgroundService
                 _logger.LogError(ex, "Error occurred in Low Stock Monitor Background Service.");
             }
 
-            // Run check every 30 minutes
-            await Task.Delay(TimeSpan.FromMinutes(30), stoppingToken);
+            // Run check every 15 minutes
+            await Task.Delay(TimeSpan.FromMinutes(15), stoppingToken);
         }
     }
 }
