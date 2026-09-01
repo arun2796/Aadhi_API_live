@@ -21,6 +21,7 @@ public interface IPurchaseService
     Task<PurchaseOrderDto> RejectPurchaseOrderAsync(Guid id, RejectPurchaseOrderRequest request, CancellationToken cancellationToken = default);
     Task<PurchaseOrderDto> CancelPurchaseOrderAsync(Guid id, CancelPurchaseOrderRequest request, CancellationToken cancellationToken = default);
     Task<GoodsReceiptDto> CreateGoodsReceiptAsync(CreateGoodsReceiptRequest request, CancellationToken cancellationToken = default);
+    Task<PagedResult<GoodsReceiptDto>> GetGoodsReceiptsAsync(int page = 1, int pageSize = 20, Guid? purchaseOrderId = null, CancellationToken cancellationToken = default);
 }
 
 public class PurchaseService : IPurchaseService
@@ -518,6 +519,62 @@ public class PurchaseService : IPurchaseService
                 LineTotal = i.LineTotal.ToDecimal()
             }).ToList()
         };
+    }
+
+    public async Task<PagedResult<GoodsReceiptDto>> GetGoodsReceiptsAsync(int page = 1, int pageSize = 20, Guid? purchaseOrderId = null, CancellationToken cancellationToken = default)
+    {
+        var query = _context.GoodsReceipts
+            .AsNoTracking()
+            .Include(g => g.PurchaseOrder)
+                .ThenInclude(po => po.Supplier)
+            .Include(g => g.PurchaseOrder)
+                .ThenInclude(po => po.Warehouse)
+            .Include(g => g.PurchaseOrder)
+                .ThenInclude(po => po.Items)
+            .Include(g => g.Items)
+            .Where(g => !g.IsDeleted);
+
+        if (purchaseOrderId.HasValue)
+        {
+            query = query.Where(g => g.PurchaseOrderId == purchaseOrderId.Value);
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var grns = await query
+            .OrderByDescending(g => g.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        var items = grns.Select(grn => new GoodsReceiptDto
+        {
+            Id = grn.Id,
+            ReceiptNumber = grn.ReceiptNumber,
+            PurchaseOrderId = grn.PurchaseOrderId,
+            PoNumber = grn.PurchaseOrder?.PoNumber ?? string.Empty,
+            SupplierId = grn.PurchaseOrder?.SupplierId ?? Guid.Empty,
+            SupplierName = grn.PurchaseOrder?.Supplier?.Name ?? "Supplier",
+            WarehouseId = grn.PurchaseOrder?.WarehouseId ?? Guid.Empty,
+            WarehouseName = grn.PurchaseOrder?.Warehouse?.Name ?? "Warehouse",
+            ReceivedDateUtc = grn.ReceivedDateUtc,
+            Notes = grn.Notes,
+            Items = grn.Items.Select(i => new GoodsReceiptItemDto
+            {
+                Id = i.Id,
+                ProductId = i.ProductId,
+                ProductName = grn.PurchaseOrder?.Items.FirstOrDefault(pi => pi.ProductId == i.ProductId)?.ProductNameSnapshot ?? "Product",
+                QuantityOrdered = i.QuantityOrdered,
+                QuantityReceived = i.QuantityReceived,
+                QuantityAccepted = i.QuantityAccepted,
+                QuantityRejected = i.QuantityRejected,
+                QuantityDamaged = i.QuantityDamaged,
+                RejectionReason = i.RejectionReason,
+                UnitPrice = i.UnitPrice.ToDecimal(),
+                LineTotal = i.LineTotal.ToDecimal()
+            }).ToList()
+        }).ToList();
+
+        return new PagedResult<GoodsReceiptDto>(items, totalCount, page, pageSize);
     }
 
     private static PurchaseOrderDto MapToPurchaseOrderDto(PurchaseOrder p)

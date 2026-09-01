@@ -43,6 +43,8 @@ public interface IApplicationDbContext
     DbSet<ReturnOrder> ReturnOrders { get; }
     DbSet<ReturnOrderItem> ReturnOrderItems { get; }
     DbSet<PromotionRedemption> PromotionRedemptions { get; }
+    DbSet<Quote> Quotes { get; }
+    DbSet<QuoteItem> QuoteItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);

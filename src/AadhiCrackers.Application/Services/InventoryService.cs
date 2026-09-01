@@ -15,6 +15,7 @@ public interface IInventoryService
     Task<StockItemDto> AdjustStockAsync(StockAdjustmentRequest request, CancellationToken cancellationToken = default);
     Task<bool> TransferStockAsync(StockTransferRequest request, CancellationToken cancellationToken = default);
     Task<PagedResult<StockMovementDto>> GetStockMovementsAsync(Guid? productId = null, Guid? warehouseId = null, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
+    Task<PagedResult<StockMovementDto>> GetStockTransfersAsync(int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
     Task<List<LowStockAlertDto>> GetLowStockAlertsAsync(int limit = 10, CancellationToken cancellationToken = default);
 }
 
@@ -294,6 +295,42 @@ public class InventoryService : IInventoryService
 
         var totalCount = await query.CountAsync(cancellationToken);
 
+        var items = await query
+            .OrderByDescending(m => m.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(m => new StockMovementDto
+            {
+                Id = m.Id,
+                ProductId = m.ProductId,
+                ProductName = m.Product.Name,
+                SKU = m.Product.SKU,
+                WarehouseId = m.WarehouseId,
+                WarehouseName = m.Warehouse.Name,
+                MovementType = m.MovementType,
+                QuantityChange = m.QuantityChange,
+                QuantityBefore = m.QuantityBefore,
+                QuantityAfter = m.QuantityAfter,
+                ReferenceType = m.ReferenceType,
+                ReferenceId = m.ReferenceId,
+                Reason = m.Reason,
+                CreatedBy = m.CreatedBy,
+                CreatedAtUtc = m.CreatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<StockMovementDto>(items, totalCount, page, pageSize);
+    }
+
+    public async Task<PagedResult<StockMovementDto>> GetStockTransfersAsync(int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
+    {
+        var query = _context.StockMovements
+            .AsNoTracking()
+            .Include(m => m.Product)
+            .Include(m => m.Warehouse)
+            .Where(m => m.MovementType == StockMovementType.TransferIn || m.MovementType == StockMovementType.TransferOut);
+
+        var totalCount = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderByDescending(m => m.CreatedAtUtc)
             .Skip((page - 1) * pageSize)

@@ -46,6 +46,8 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<ReturnOrder> ReturnOrders => Set<ReturnOrder>();
     public DbSet<ReturnOrderItem> ReturnOrderItems => Set<ReturnOrderItem>();
     public DbSet<PromotionRedemption> PromotionRedemptions => Set<PromotionRedemption>();
+    public DbSet<Quote> Quotes => Set<Quote>();
+    public DbSet<QuoteItem> QuoteItems => Set<QuoteItem>();
 
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
@@ -530,6 +532,31 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(r => r.TimestampUtc);
             b.HasIndex(r => r.Endpoint);
             b.HasIndex(r => r.IpAddress);
+        });
+
+        // Quote Configuration
+        builder.Entity<Quote>(b =>
+        {
+            b.HasKey(q => q.Id);
+            b.HasIndex(q => q.QuoteNumber).IsUnique();
+            b.HasIndex(q => q.CustomerId);
+            b.HasIndex(q => q.Status);
+            b.Property(q => q.QuoteNumber).IsRequired().HasMaxLength(50);
+            b.Property(q => q.Subtotal).HasPrecision(18, 2);
+            b.Property(q => q.Discount).HasPrecision(18, 2);
+            b.Property(q => q.Tax).HasPrecision(18, 2);
+            b.Property(q => q.GrandTotal).HasPrecision(18, 2);
+            b.HasMany(q => q.Items).WithOne(i => i.Quote).HasForeignKey(i => i.QuoteId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(q => !q.IsDeleted);
+        });
+
+        // QuoteItem Configuration
+        builder.Entity<QuoteItem>(b =>
+        {
+            b.HasKey(qi => qi.Id);
+            b.Property(qi => qi.UnitPrice).HasPrecision(18, 2);
+            b.Property(qi => qi.LineTotal).HasPrecision(18, 2);
+            b.Property(qi => qi.DiscountPercentage).HasPrecision(18, 2);
         });
     }
 

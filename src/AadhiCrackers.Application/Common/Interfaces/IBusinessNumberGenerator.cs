@@ -11,4 +11,5 @@ public interface IBusinessNumberGenerator
     Task<string> GenerateGoodsReceiptNumberAsync(CancellationToken cancellationToken = default);
     Task<string> GenerateExpenseNumberAsync(CancellationToken cancellationToken = default);
     Task<string> GenerateSupplierBillNumberAsync(CancellationToken cancellationToken = default);
+    Task<string> GenerateQuoteNumberAsync(CancellationToken cancellationToken = default);
 }

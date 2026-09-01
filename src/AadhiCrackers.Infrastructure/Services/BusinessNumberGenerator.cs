@@ -103,6 +103,16 @@ public class BusinessNumberGenerator : IBusinessNumberGenerator
             cancellationToken);
     }
 
+    public async Task<string> GenerateQuoteNumberAsync(CancellationToken cancellationToken = default)
+    {
+        var year = DateTime.UtcNow.Year;
+        var prefix = $"QUO-{year}-";
+        return await GenerateNextNumberAsync(
+            _context.Quotes.Where(q => q.QuoteNumber.StartsWith(prefix)).Select(q => q.QuoteNumber),
+            prefix,
+            cancellationToken);
+    }
+
     private static async Task<string> GenerateNextNumberAsync(
         IQueryable<string> existingNumbersQuery,
         string prefix,

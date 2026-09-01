@@ -147,7 +147,10 @@ public enum AuditAction
     PurchaseApproved = 27,
     PurchaseRejected = 28,
     ReturnApproved = 29,
-    ReturnReceived = 30
+    ReturnReceived = 30,
+    QuoteCreated = 31,
+    QuoteConverted = 32,
+    QuoteStatusChanged = 33
 }
 
 public enum AuditSeverity
@@ -165,5 +168,15 @@ public enum PromotionStatus
     Active = 3,
     Expired = 4,
     Disabled = 5
+}
+
+public enum QuoteStatus
+{
+    Draft = 1,
+    Sent = 2,
+    Accepted = 3,
+    Rejected = 4,
+    Expired = 5,
+    Converted = 6
 }
 

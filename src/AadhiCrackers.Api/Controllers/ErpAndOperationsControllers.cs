@@ -245,6 +245,18 @@ public class InventoryController : ControllerBase
         return Ok(ApiResponse<PagedResult<StockMovementDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpGet("transfers")]
+    [Authorize(Policy = "RequireInventoryManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PagedResult<StockMovementDto>>>> GetTransfers(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _inventoryService.GetStockTransfersAsync(page, pageSize, cancellationToken);
+        return Ok(ApiResponse<PagedResult<StockMovementDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+    }
+
     [HttpGet("low-stock")]
     [Authorize(Policy = "RequireInventoryManager")]
     public async Task<ActionResult<ApiResponse<List<LowStockAlertDto>>>> GetLowStockAlerts([FromQuery] int limit = 10, CancellationToken cancellationToken = default)
@@ -360,6 +372,19 @@ public class PurchasesController : ControllerBase
     {
         var grn = await _purchaseService.CreateGoodsReceiptAsync(request, cancellationToken);
         return Ok(ApiResponse<GoodsReceiptDto>.Ok(grn, "Goods received and stock updated", _currentUser.CorrelationId));
+    }
+
+    [HttpGet("goods-receipts")]
+    [Authorize(Policy = "RequirePurchaseManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PagedResult<GoodsReceiptDto>>>> GetGoodsReceipts(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] Guid? purchaseOrderId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var grns = await _purchaseService.GetGoodsReceiptsAsync(page, pageSize, purchaseOrderId, cancellationToken);
+        return Ok(ApiResponse<PagedResult<GoodsReceiptDto>>.Ok(grns, correlationId: _currentUser.CorrelationId));
     }
 }
 
