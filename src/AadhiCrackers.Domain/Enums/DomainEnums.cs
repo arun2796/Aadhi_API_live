@@ -158,3 +158,12 @@ public enum AuditSeverity
     Critical = 4
 }
 
+public enum PromotionStatus
+{
+    Draft = 1,
+    Scheduled = 2,
+    Active = 3,
+    Expired = 4,
+    Disabled = 5
+}
+

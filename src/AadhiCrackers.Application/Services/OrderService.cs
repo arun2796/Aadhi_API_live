@@ -103,6 +103,7 @@ public class OrderService : IOrderService
 
         var order = new Order
         {
+            Id = Guid.NewGuid(),
             OrderNumber = orderNumber,
             CustomerId = customer.Id,
             WarehouseId = warehouse.Id,
@@ -232,11 +233,11 @@ public class OrderService : IOrderService
         var discount = Money.Zero();
         if (!string.IsNullOrWhiteSpace(request.CouponCode))
         {
-            var promo = await _context.Promotions.FirstOrDefaultAsync(p => p.Code.ToUpper() == request.CouponCode.Trim().ToUpper(), cancellationToken);
+            var promo = await _context.Promotions.FirstOrDefaultAsync(p => p.Code.ToUpper() == request.CouponCode.Trim().ToUpper() && !p.IsDeleted, cancellationToken);
             if (promo != null)
             {
-                var customerUsageCount = await _context.Orders
-                    .CountAsync(o => o.CustomerId == customer.Id && o.CouponCode == promo.Code && o.OrderStatus != OrderStatus.Cancelled && !o.IsDeleted, cancellationToken);
+                var customerUsageCount = await _context.PromotionRedemptions
+                    .CountAsync(r => r.PromotionId == promo.Id && r.CustomerId == customer.Id && !r.IsDeleted, cancellationToken);
 
                 if (promo.IsValidForOrder(itemsSubtotal, customerUsageCount))
                 {
@@ -244,6 +245,14 @@ public class OrderService : IOrderService
                     promo.UsedCount++;
                     promo.RowVersion = Guid.NewGuid();
                     order.CouponCode = promo.Code;
+
+                    _context.PromotionRedemptions.Add(new PromotionRedemption
+                    {
+                        PromotionId = promo.Id,
+                        CustomerId = customer.Id,
+                        OrderId = order.Id,
+                        RedeemedAtUtc = DateTime.UtcNow
+                    });
                 }
             }
         }
@@ -424,6 +433,15 @@ public class OrderService : IOrderService
                 {
                     promo.UsedCount--;
                     promo.RowVersion = Guid.NewGuid();
+                }
+
+                var redemptions = await _context.PromotionRedemptions
+                    .Where(r => r.OrderId == order.Id && !r.IsDeleted)
+                    .ToListAsync(cancellationToken);
+                foreach (var r in redemptions)
+                {
+                    r.IsDeleted = true;
+                    r.UpdatedAtUtc = DateTime.UtcNow;
                 }
             }
 
@@ -1007,6 +1025,15 @@ public class OrderService : IOrderService
             {
                 promo.UsedCount--;
                 promo.RowVersion = Guid.NewGuid();
+            }
+
+            var redemptions = await _context.PromotionRedemptions
+                .Where(r => r.OrderId == order.Id && !r.IsDeleted)
+                .ToListAsync(cancellationToken);
+            foreach (var r in redemptions)
+            {
+                r.IsDeleted = true;
+                r.UpdatedAtUtc = DateTime.UtcNow;
             }
         }
 

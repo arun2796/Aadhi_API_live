@@ -154,6 +154,12 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         var promoAfterOrder1 = await _context.Promotions.FirstAsync(p => p.Code == "SAVE10");
         Assert.Equal(1, promoAfterOrder1.UsedCount);
 
+        var redemptionsAfterOrder1 = await _context.PromotionRedemptions
+            .Where(r => r.PromotionId == promo.Id && !r.IsDeleted)
+            .ToListAsync();
+        Assert.Single(redemptionsAfterOrder1);
+        Assert.Equal(order1.Id, redemptionsAfterOrder1[0].OrderId);
+
         // 3. Second order with SAVE10 by same customer -> PerCustomerLimit reached, discount is 0
         var order2 = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
@@ -177,7 +183,7 @@ public class PromotionFinanceAndOutboxTests : IDisposable
 
         Assert.Equal(0m, order2.Discount);
 
-        // 4. Cancel Order 1 -> UsedCount rolls back, Invoices cancelled
+        // 4. Cancel Order 1 -> UsedCount rolls back, Invoices cancelled, Redemption marked deleted
         await _orderService.UpdateOrderStatusAsync(order1.Id, new UpdateOrderStatusRequest
         {
             NewStatus = OrderStatus.Cancelled,
@@ -187,8 +193,43 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         var promoAfterCancel = await _context.Promotions.FirstAsync(p => p.Code == "SAVE10");
         Assert.Equal(0, promoAfterCancel.UsedCount);
 
+        var activeRedemptionsAfterCancel = await _context.PromotionRedemptions
+            .Where(r => r.OrderId == order1.Id && !r.IsDeleted)
+            .ToListAsync();
+        Assert.Empty(activeRedemptionsAfterCancel);
+
         var invoices = await _context.Invoices.Where(i => i.OrderId == order1.Id).ToListAsync();
         Assert.All(invoices, inv => Assert.Equal(InvoiceStatus.Cancelled, inv.Status));
+    }
+
+    [Fact]
+    public void Promotion_LifecycleStatusTransitions_Enforced()
+    {
+        var promo = new Promotion
+        {
+            Code = "SEASON20",
+            Name = "Seasonal 20%",
+            DiscountType = DiscountType.Percentage,
+            DiscountValue = 20m,
+            IsActive = true,
+            Status = PromotionStatus.Draft
+        };
+
+        // Draft promo is NOT valid for order
+        Assert.False(promo.IsValidForOrder(Money.FromDecimal(1000m)));
+
+        // Transition to Active -> Valid
+        promo.Status = PromotionStatus.Active;
+        Assert.True(promo.IsValidForOrder(Money.FromDecimal(1000m)));
+        Assert.Equal(200m, promo.CalculateDiscount(Money.FromDecimal(1000m)).ToDecimal());
+
+        // Transition to Expired -> Invalid
+        promo.Status = PromotionStatus.Expired;
+        Assert.False(promo.IsValidForOrder(Money.FromDecimal(1000m)));
+
+        // Transition to Disabled -> Invalid
+        promo.Status = PromotionStatus.Disabled;
+        Assert.False(promo.IsValidForOrder(Money.FromDecimal(1000m)));
     }
 
     [Fact]

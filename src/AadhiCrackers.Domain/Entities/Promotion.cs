@@ -19,13 +19,16 @@ public class Promotion : BaseEntity<Guid>
     public int UsedCount { get; set; }
     public int? PerCustomerLimit { get; set; } = 1;
     public bool IsActive { get; set; } = true;
+    public PromotionStatus Status { get; set; } = PromotionStatus.Active;
     public Guid RowVersion { get; set; } = Guid.NewGuid();
+
+    public ICollection<PromotionRedemption> Redemptions { get; set; } = new List<PromotionRedemption>();
 
     public bool IsValidForOrder(Money subtotal, int? customerUsageCount = null, DateTime? checkTimeUtc = null)
     {
         var now = checkTimeUtc ?? DateTime.UtcNow;
 
-        if (!IsActive) return false;
+        if (!IsActive || Status != PromotionStatus.Active) return false;
         if (StartDateUtc.HasValue && now < StartDateUtc.Value) return false;
         if (EndDateUtc.HasValue && now > EndDateUtc.Value) return false;
         if (UsageLimit.HasValue && UsedCount >= UsageLimit.Value) return false;
@@ -66,4 +69,16 @@ public class Promotion : BaseEntity<Guid>
 
         return calculatedDiscount;
     }
+}
+
+public class PromotionRedemption : BaseEntity<Guid>
+{
+    public Guid PromotionId { get; set; }
+    public Promotion Promotion { get; set; } = null!;
+    public Guid CustomerId { get; set; }
+    public Customer Customer { get; set; } = null!;
+    public Guid OrderId { get; set; }
+    public Order Order { get; set; } = null!;
+    public DateTime RedeemedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid RowVersion { get; set; } = Guid.NewGuid();
 }

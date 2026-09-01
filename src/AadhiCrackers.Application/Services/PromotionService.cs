@@ -41,7 +41,7 @@ public class PromotionService : IPromotionService
 
         if (activeOnly.HasValue && activeOnly.Value)
         {
-            query = query.Where(p => p.IsActive);
+            query = query.Where(p => p.IsActive && p.Status == PromotionStatus.Active);
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
@@ -85,6 +85,7 @@ public class PromotionService : IPromotionService
             UsedCount = 0,
             PerCustomerLimit = request.PerCustomerLimit,
             IsActive = request.IsActive,
+            Status = request.Status,
             RowVersion = Guid.NewGuid()
         };
 
@@ -98,7 +99,7 @@ public class PromotionService : IPromotionService
             nameof(Promotion),
             promo.Id.ToString(),
             promo.Code,
-            after: new { promo.Code, promo.DiscountType, promo.DiscountValue, promo.UsageLimit, promo.PerCustomerLimit },
+            after: new { promo.Code, promo.DiscountType, promo.DiscountValue, promo.UsageLimit, promo.PerCustomerLimit, promo.Status },
             cancellationToken: cancellationToken);
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -112,7 +113,7 @@ public class PromotionService : IPromotionService
         var promo = await _context.Promotions.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, cancellationToken)
             ?? throw new ResourceNotFoundException(nameof(Promotion), id);
 
-        var before = new { promo.Name, promo.DiscountType, promo.DiscountValue, promo.IsActive };
+        var before = new { promo.Name, promo.DiscountType, promo.DiscountValue, promo.IsActive, promo.Status };
 
         promo.Name = request.Name.Trim();
         promo.Description = request.Description?.Trim();
@@ -125,6 +126,7 @@ public class PromotionService : IPromotionService
         promo.UsageLimit = request.UsageLimit;
         promo.PerCustomerLimit = request.PerCustomerLimit;
         promo.IsActive = request.IsActive;
+        promo.Status = request.Status;
         promo.RowVersion = Guid.NewGuid();
         promo.UpdatedAtUtc = DateTime.UtcNow;
 
@@ -137,7 +139,7 @@ public class PromotionService : IPromotionService
             promo.Id.ToString(),
             promo.Code,
             before: before,
-            after: new { promo.Name, promo.DiscountType, promo.DiscountValue, promo.IsActive },
+            after: new { promo.Name, promo.DiscountType, promo.DiscountValue, promo.IsActive, promo.Status },
             cancellationToken: cancellationToken);
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -153,6 +155,7 @@ public class PromotionService : IPromotionService
 
         promo.IsDeleted = true;
         promo.IsActive = false;
+        promo.Status = PromotionStatus.Disabled;
         promo.UpdatedAtUtc = DateTime.UtcNow;
 
         await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
@@ -188,7 +191,8 @@ public class PromotionService : IPromotionService
             UsageLimit = p.UsageLimit,
             UsedCount = p.UsedCount,
             PerCustomerLimit = p.PerCustomerLimit,
-            IsActive = p.IsActive
+            IsActive = p.IsActive,
+            Status = p.Status
         };
     }
 }

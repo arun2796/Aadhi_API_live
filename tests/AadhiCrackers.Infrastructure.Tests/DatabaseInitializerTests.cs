@@ -23,7 +23,8 @@ public class DatabaseInitializerTests
             var appliedMigrations = await context.Database.GetAppliedMigrationsAsync();
             var pendingMigrations = await context.Database.GetPendingMigrationsAsync();
 
-            appliedMigrations.Should().ContainSingle(migration => migration.EndsWith("InitialCreate"));
+            appliedMigrations.Should().Contain(migration => migration.EndsWith("InitialCreate"));
+            appliedMigrations.Should().Contain(migration => migration.EndsWith("AddPromotionRedemptions"));
             pendingMigrations.Should().BeEmpty();
         }
         finally
@@ -60,7 +61,8 @@ public class DatabaseInitializerTests
             var appliedMigrations = await migratedContext.Database.GetAppliedMigrationsAsync();
             var hasLegacyCategory = await migratedContext.Categories.AnyAsync(category => category.Slug == "legacy-category");
 
-            appliedMigrations.Should().ContainSingle(migration => migration.EndsWith("InitialCreate"));
+            appliedMigrations.Should().Contain(migration => migration.EndsWith("InitialCreate"));
+            appliedMigrations.Should().Contain(migration => migration.EndsWith("AddPromotionRedemptions"));
             hasLegacyCategory.Should().BeTrue();
         }
         finally

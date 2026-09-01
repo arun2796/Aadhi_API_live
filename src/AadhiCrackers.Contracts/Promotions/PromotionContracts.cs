@@ -18,6 +18,7 @@ public class PromotionDto
     public int UsedCount { get; set; }
     public int? PerCustomerLimit { get; set; }
     public bool IsActive { get; set; }
+    public PromotionStatus Status { get; set; } = PromotionStatus.Active;
 }
 
 public class CreatePromotionRequest
@@ -34,6 +35,7 @@ public class CreatePromotionRequest
     public int? UsageLimit { get; set; }
     public int? PerCustomerLimit { get; set; } = 1;
     public bool IsActive { get; set; } = true;
+    public PromotionStatus Status { get; set; } = PromotionStatus.Active;
 }
 
 public class UpdatePromotionRequest
@@ -49,4 +51,5 @@ public class UpdatePromotionRequest
     public int? UsageLimit { get; set; }
     public int? PerCustomerLimit { get; set; }
     public bool IsActive { get; set; }
+    public PromotionStatus Status { get; set; } = PromotionStatus.Active;
 }

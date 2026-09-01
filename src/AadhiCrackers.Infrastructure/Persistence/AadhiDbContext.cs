@@ -45,6 +45,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<SupplierBill> SupplierBills => Set<SupplierBill>();
     public DbSet<ReturnOrder> ReturnOrders => Set<ReturnOrder>();
     public DbSet<ReturnOrderItem> ReturnOrderItems => Set<ReturnOrderItem>();
+    public DbSet<PromotionRedemption> PromotionRedemptions => Set<PromotionRedemption>();
 
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
@@ -461,6 +462,28 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasQueryFilter(p => !p.IsDeleted);
         });
 
+        // PromotionRedemption Configuration
+        builder.Entity<PromotionRedemption>(b =>
+        {
+            b.HasKey(r => r.Id);
+            b.HasIndex(r => new { r.PromotionId, r.CustomerId });
+            b.HasIndex(r => r.OrderId);
+            b.Property(r => r.RowVersion).IsConcurrencyToken();
+            b.HasOne(r => r.Promotion)
+                .WithMany(p => p.Redemptions)
+                .HasForeignKey(r => r.PromotionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(r => r.Customer)
+                .WithMany()
+                .HasForeignKey(r => r.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(r => r.Order)
+                .WithMany()
+                .HasForeignKey(r => r.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(r => !r.IsDeleted);
+        });
+
         // AuditLog Configuration
         builder.Entity<AuditLog>(b =>
         {
@@ -546,6 +569,10 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
                 else if (entry.Entity is Promotion promotion)
                 {
                     promotion.RowVersion = Guid.NewGuid();
+                }
+                else if (entry.Entity is PromotionRedemption redemption)
+                {
+                    redemption.RowVersion = Guid.NewGuid();
                 }
             }
         }

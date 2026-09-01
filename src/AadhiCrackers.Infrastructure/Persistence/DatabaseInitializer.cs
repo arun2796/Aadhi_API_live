@@ -84,8 +84,20 @@ public static class DatabaseInitializer
 
             if (historyRowCount == 0)
             {
-                var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(firstMigrationId, "9.0.2"));
-                await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                var migrations = context.Database.GetMigrations().ToList();
+                foreach (var migrationId in migrations)
+                {
+                    if (migrationId == firstMigrationId)
+                    {
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
+                    else if (migrationId.Contains("AddPromotionRedemptions") && await TableExistsAsync(connection, "PromotionRedemptions", cancellationToken))
+                    {
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
+                }
 
                 logger.LogWarning(
                     "Existing database without migration history was baselined to migration {MigrationId}. Pending migrations will be applied next.",
