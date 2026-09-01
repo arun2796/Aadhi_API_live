@@ -83,6 +83,9 @@ public interface INotificationService
 {
     Task SendOrderConfirmationAsync(Order order, CancellationToken cancellationToken = default);
     Task SendOrderStatusUpdatedAsync(Order order, CancellationToken cancellationToken = default);
+    Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default);
+    Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default);
+    Task SendReturnStatusUpdatedAsync(ReturnOrder returnOrder, CancellationToken cancellationToken = default);
     Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default);
 }
 

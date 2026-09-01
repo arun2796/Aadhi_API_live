@@ -93,18 +93,73 @@ public class OutboxProcessorBackgroundService : BackgroundService
                                             }
                                             break;
                                         }
+                                    case "PaymentVerified":
                                     case "PaymentReceived":
+                                        {
+                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            if (doc.RootElement.TryGetProperty("OrderId", out var orderIdProp) &&
+                                                Guid.TryParse(orderIdProp.GetString(), out var orderId))
+                                            {
+                                                var order = await context.Orders
+                                                    .Include(o => o.Customer)
+                                                    .FirstOrDefaultAsync(o => o.Id == orderId, stoppingToken);
+
+                                                if (order != null)
+                                                {
+                                                    await notificationService.SendPaymentVerifiedAsync(order, stoppingToken);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    case "PaymentRejected":
+                                        {
+                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            var reason = doc.RootElement.TryGetProperty("Reason", out var rProp) ? rProp.GetString() ?? "Payment rejected" : "Payment rejected";
+                                            if (doc.RootElement.TryGetProperty("OrderId", out var orderIdProp) &&
+                                                Guid.TryParse(orderIdProp.GetString(), out var orderId))
+                                            {
+                                                var order = await context.Orders
+                                                    .Include(o => o.Customer)
+                                                    .FirstOrDefaultAsync(o => o.Id == orderId, stoppingToken);
+
+                                                if (order != null)
+                                                {
+                                                    await notificationService.SendPaymentRejectedAsync(order, reason, stoppingToken);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    case "ReturnRequested":
+                                    case "ReturnApproved":
                                     case "ReturnInspected":
+                                        {
+                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            if (doc.RootElement.TryGetProperty("ReturnId", out var returnIdProp) &&
+                                                Guid.TryParse(returnIdProp.GetString(), out var returnId))
+                                            {
+                                                var returnOrder = await context.ReturnOrders
+                                                    .Include(r => r.Customer)
+                                                    .Include(r => r.Items)
+                                                    .FirstOrDefaultAsync(r => r.Id == returnId, stoppingToken);
+
+                                                if (returnOrder != null)
+                                                {
+                                                    await notificationService.SendReturnStatusUpdatedAsync(returnOrder, stoppingToken);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    case "PaymentRecorded":
+                                    case "RefundProcessed":
                                     case "GoodsReceiptCreated":
                                     case "InventoryAdjusted":
                                     case "AuditLogCreated":
                                         {
-                                            _logger.LogInformation("Successfully processed domain outbox event [{Id}] Type={Type}", msg.Id, msg.Type);
+                                            _logger.LogInformation("Domain ledger outbox event [{Id}] Type={Type} successfully processed.", msg.Id, msg.Type);
                                             break;
                                         }
                                     default:
-                                        _logger.LogInformation("Handled general outbox message type: {Type}", msg.Type);
-                                        break;
+                                        throw new NotSupportedException($"Outbox event type '{msg.Type}' has no registered handler and cannot be processed.");
                                 }
                             }
 

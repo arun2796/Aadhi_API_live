@@ -106,6 +106,27 @@ public class NotificationService : INotificationService
         return Task.CompletedTask;
     }
 
+    public Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("📧 [Notification Service] Payment verified notification dispatched for Order #{OrderNumber}, Total: {GrandTotal}",
+            order.OrderNumber, order.GrandTotal.Format());
+        return Task.CompletedTask;
+    }
+
+    public Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default)
+    {
+        _logger.LogWarning("📧 [Notification Service] Payment rejected notification dispatched for Order #{OrderNumber}. Reason: {Reason}",
+            order.OrderNumber, reason);
+        return Task.CompletedTask;
+    }
+
+    public Task SendReturnStatusUpdatedAsync(ReturnOrder returnOrder, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("📧 [Notification Service] Return order update dispatched for Return #{ReturnNumber}, Status: {Status}",
+            returnOrder.ReturnNumber, returnOrder.Status);
+        return Task.CompletedTask;
+    }
+
     public Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default)
     {
         _logger.LogWarning("⚠️ [Notification Service] Low stock alert: Product '{Name}' (SKU: {SKU}) is at {Stock} units (Reorder Level: {ReorderLevel})",

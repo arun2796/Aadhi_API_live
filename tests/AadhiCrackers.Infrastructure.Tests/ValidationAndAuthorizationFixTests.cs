@@ -266,4 +266,22 @@ public class ValidationAndAuthorizationFixTests : IDisposable
         Assert.Equal("192.168.1.50", saved.IpAddress);
         Assert.Equal(1, saved.BlockedCount);
     }
+
+    [Fact]
+    public async Task Outbox_EnqueuedMessages_ArePersistedWithPendingStatus()
+    {
+        // Arrange
+        using var context = new AadhiDbContext(_options);
+        var outbox = new OutboxService(context);
+
+        // Act
+        await outbox.EnqueueAsync("PaymentVerified", new { OrderId = Guid.NewGuid(), OrderNumber = "ORD-TEST-100" });
+        await context.SaveChangesAsync();
+
+        // Assert
+        var msg = await context.OutboxMessages.FirstOrDefaultAsync(m => m.Type == "PaymentVerified");
+        Assert.NotNull(msg);
+        Assert.Equal("Pending", msg.Status);
+        Assert.Equal(0, msg.RetryCount);
+    }
 }
