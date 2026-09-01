@@ -106,8 +106,16 @@ public class AuthController : ControllerBase
     [HttpPut("users/{id}/role")]
     [Authorize(Policy = "RequireSuperAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(string id, [FromBody] string role, CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(string id, [FromBody] System.Text.Json.JsonElement payload, CancellationToken cancellationToken)
     {
+        string role = payload.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => payload.GetString() ?? string.Empty,
+            System.Text.Json.JsonValueKind.Object when payload.TryGetProperty("role", out var prop) => prop.GetString() ?? string.Empty,
+            System.Text.Json.JsonValueKind.Object when payload.TryGetProperty("newRole", out var prop2) => prop2.GetString() ?? string.Empty,
+            _ => payload.ToString()
+        };
+
         var success = await _identityService.UpdateUserRoleAsync(id, role, cancellationToken);
         return Ok(ApiResponse<bool>.Ok(success, "Role updated successfully", _currentUser.CorrelationId));
     }
@@ -115,8 +123,16 @@ public class AuthController : ControllerBase
     [HttpPut("users/{id}/status")]
     [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
-    public async Task<ActionResult<ApiResponse<bool>>> ToggleUserStatus(string id, [FromBody] bool isActive, CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<bool>>> ToggleUserStatus(string id, [FromBody] System.Text.Json.JsonElement payload, CancellationToken cancellationToken)
     {
+        bool isActive = payload.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Object when payload.TryGetProperty("isActive", out var prop) => prop.GetBoolean(),
+            _ => true
+        };
+
         var success = await _identityService.ToggleUserStatusAsync(id, isActive, cancellationToken);
         return Ok(ApiResponse<bool>.Ok(success, "Status updated successfully", _currentUser.CorrelationId));
     }

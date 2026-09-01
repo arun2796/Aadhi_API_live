@@ -11,11 +11,6 @@ public class CustomerAddress : BaseEntity<Guid>
     public AddressType AddressType { get; set; } = AddressType.Both;
     public Address Address { get; set; } = new();
     public bool IsDefault { get; set; }
-
-    public CustomerAddress()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class Customer : AggregateRoot<Guid>
@@ -33,9 +28,4 @@ public class Customer : AggregateRoot<Guid>
 
     public ICollection<CustomerAddress> Addresses { get; set; } = new List<CustomerAddress>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
-
-    public Customer()
-    {
-        Id = Guid.NewGuid();
-    }
 }

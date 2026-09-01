@@ -1,5 +1,12 @@
 namespace AadhiCrackers.Domain.Enums;
 
+public enum ProductType
+{
+    Simple = 1,
+    Variant = 2,
+    Bundle = 3
+}
+
 public enum OrderStatus
 {
     Pending = 1,
@@ -21,7 +28,8 @@ public enum PaymentStatus
     Failed = 4,
     RefundPending = 5,
     Refunded = 6,
-    Cancelled = 7
+    Cancelled = 7,
+    PartiallyPaid = 8
 }
 
 public enum PaymentMethod
@@ -55,7 +63,9 @@ public enum StockMovementType
     Adjustment = 5,
     TransferIn = 6,
     TransferOut = 7,
-    Damage = 8
+    Damage = 8,
+    StockReserved = 9,
+    StockReservationReleased = 10
 }
 
 public enum InvoiceStatus
@@ -75,7 +85,8 @@ public enum PurchaseOrderStatus
     Approved = 3,
     PartiallyReceived = 4,
     Received = 5,
-    Cancelled = 6
+    Cancelled = 6,
+    Rejected = 7
 }
 
 public enum ExpenseCategory
@@ -127,7 +138,16 @@ public enum AuditAction
     GoodsReceived = 18,
     CustomerUpdated = 19,
     ExportGenerated = 20,
-    SettingsChanged = 21
+    SettingsChanged = 21,
+    PaymentRejected = 22,
+    PaymentVerified = 23,
+    RefundProcessed = 24,
+    ReturnRequested = 25,
+    ReturnInspected = 26,
+    PurchaseApproved = 27,
+    PurchaseRejected = 28,
+    ReturnApproved = 29,
+    ReturnReceived = 30
 }
 
 public enum AuditSeverity
@@ -137,3 +157,4 @@ public enum AuditSeverity
     Error = 3,
     Critical = 4
 }
+

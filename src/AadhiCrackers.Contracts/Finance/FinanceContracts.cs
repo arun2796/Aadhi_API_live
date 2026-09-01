@@ -34,6 +34,8 @@ public class PaymentDto
     public PaymentMethod PaymentMethod { get; set; }
     public PaymentStatus PaymentStatus { get; set; }
     public string? TransactionReference { get; set; }
+    public string? UtrNumber { get; set; }
+    public string? IdempotencyKey { get; set; }
     public string? Notes { get; set; }
     public DateTime PaidAtUtc { get; set; }
 }
@@ -45,7 +47,74 @@ public class CreatePaymentRequest
     public decimal Amount { get; set; }
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Cash;
     public string? TransactionReference { get; set; }
+    public string? UtrNumber { get; set; }
+    public string? IdempotencyKey { get; set; }
     public string? Notes { get; set; }
+}
+
+public class RefundDto
+{
+    public Guid Id { get; set; }
+    public string RefundNumber { get; set; } = string.Empty;
+    public Guid OrderId { get; set; }
+    public string OrderNumber { get; set; } = string.Empty;
+    public Guid? PaymentId { get; set; }
+    public decimal Amount { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public PaymentMethod Method { get; set; }
+    public string Status { get; set; } = "Completed";
+    public string? Reference { get; set; }
+    public string? IdempotencyKey { get; set; }
+    public DateTime ProcessedAtUtc { get; set; }
+}
+
+public class CreateRefundRequest
+{
+    public Guid OrderId { get; set; }
+    public Guid? PaymentId { get; set; }
+    public decimal Amount { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public PaymentMethod Method { get; set; } = PaymentMethod.UPI;
+    public string? Reference { get; set; }
+    public string? IdempotencyKey { get; set; }
+}
+
+public class SupplierBillDto
+{
+    public Guid Id { get; set; }
+    public string BillNumber { get; set; } = string.Empty;
+    public Guid SupplierId { get; set; }
+    public string SupplierName { get; set; } = string.Empty;
+    public Guid? PurchaseOrderId { get; set; }
+    public string? PoNumber { get; set; }
+    public Guid? GoodsReceiptId { get; set; }
+    public string? GrnNumber { get; set; }
+    public decimal Subtotal { get; set; }
+    public decimal Tax { get; set; }
+    public decimal Discount { get; set; }
+    public decimal Total { get; set; }
+    public decimal PaidAmount { get; set; }
+    public decimal BalanceAmount { get; set; }
+    public DateTime DueDateUtc { get; set; }
+    public string Status { get; set; } = "Issued";
+}
+
+public class CreateSupplierBillRequest
+{
+    public Guid SupplierId { get; set; }
+    public Guid? PurchaseOrderId { get; set; }
+    public Guid? GoodsReceiptId { get; set; }
+    public decimal Subtotal { get; set; }
+    public decimal Tax { get; set; }
+    public decimal Discount { get; set; }
+    public DateTime? DueDateUtc { get; set; }
+}
+
+public class PaySupplierBillRequest
+{
+    public decimal Amount { get; set; }
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.BankTransfer;
+    public string? Reference { get; set; }
 }
 
 public class ExpenseDto

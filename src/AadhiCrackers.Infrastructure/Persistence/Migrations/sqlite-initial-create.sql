@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
     "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
     "ProductVersion" TEXT NOT NULL
 );
@@ -181,6 +181,7 @@ CREATE TABLE "Promotions" (
     "UsedCount" INTEGER NOT NULL,
     "PerCustomerLimit" INTEGER NULL,
     "IsActive" INTEGER NOT NULL,
+    "RowVersion" TEXT NOT NULL,
     "CreatedAtUtc" TEXT NOT NULL,
     "UpdatedAtUtc" TEXT NULL,
     "CreatedBy" TEXT NULL,
@@ -319,7 +320,7 @@ CREATE TABLE "Products" (
     "IsBestSeller" INTEGER NOT NULL,
     "IsNewArrival" INTEGER NOT NULL,
     "SafetyInformation" TEXT NULL,
-    "RowVersion" BLOB NULL,
+    "RowVersion" TEXT NOT NULL,
     "CreatedAtUtc" TEXT NOT NULL,
     "UpdatedAtUtc" TEXT NULL,
     "CreatedBy" TEXT NULL,
@@ -503,6 +504,7 @@ CREATE TABLE "StockItems" (
     "QuantityOnHand" INTEGER NOT NULL,
     "QuantityReserved" INTEGER NOT NULL,
     "ReorderLevel" INTEGER NOT NULL,
+    "RowVersion" TEXT NOT NULL,
     "CreatedAtUtc" TEXT NOT NULL,
     "UpdatedAtUtc" TEXT NULL,
     "CreatedBy" TEXT NULL,

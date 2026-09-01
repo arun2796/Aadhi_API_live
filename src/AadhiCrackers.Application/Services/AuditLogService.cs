@@ -111,14 +111,8 @@ public class AuditLogService : IAuditLogService
             audit.Success
         }, cancellationToken);
 
-        try
-        {
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-        catch
-        {
-            // Do not break main business execution if audit save encounters transient DB issue
-        }
+        // Persistence is deliberately owned by the calling command transaction. This keeps
+        // the business mutation, audit entry, and outbox message atomic.
     }
 
     public async Task<PagedResult<AuditLogDto>> GetAuditLogsAsync(AuditLogFilterRequest filter, CancellationToken cancellationToken = default)

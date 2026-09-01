@@ -14,11 +14,6 @@ public class OrderStatusHistory : BaseEntity<Guid>
     public string? Reason { get; set; }
     public string? ChangedBy { get; set; }
     public DateTime ChangedAtUtc { get; set; } = DateTime.UtcNow;
-
-    public OrderStatusHistory()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class OrderItem : BaseEntity<Guid>
@@ -33,15 +28,11 @@ public class OrderItem : BaseEntity<Guid>
     public string SKUSnapshot { get; set; } = string.Empty;
     public string? ProductImageUrlSnapshot { get; set; }
     public Money UnitPrice { get; set; } = Money.Zero();
+    public Money CostPriceSnapshot { get; set; } = Money.Zero();
     public int Quantity { get; set; }
     public Money Discount { get; set; } = Money.Zero();
     public Money Tax { get; set; } = Money.Zero();
     public Money LineTotal { get; set; } = Money.Zero();
-
-    public OrderItem()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class Order : AggregateRoot<Guid>
@@ -83,11 +74,6 @@ public class Order : AggregateRoot<Guid>
     public ICollection<OrderStatusHistory> StatusHistories { get; set; } = new List<OrderStatusHistory>();
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
-
-    public Order()
-    {
-        Id = Guid.NewGuid();
-    }
 
     public bool CanTransitionTo(OrderStatus nextStatus)
     {

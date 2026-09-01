@@ -16,11 +16,6 @@ public class Supplier : BaseEntity<Guid>
     public bool IsActive { get; set; } = true;
 
     public ICollection<PurchaseOrder> PurchaseOrders { get; set; } = new List<PurchaseOrder>();
-
-    public Supplier()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class PurchaseOrderItem : BaseEntity<Guid>
@@ -36,11 +31,6 @@ public class PurchaseOrderItem : BaseEntity<Guid>
     public int QuantityOrdered { get; set; }
     public int QuantityReceived { get; set; }
     public Money LineTotal { get; set; } = Money.Zero();
-
-    public PurchaseOrderItem()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class PurchaseOrder : AggregateRoot<Guid>
@@ -59,13 +49,19 @@ public class PurchaseOrder : AggregateRoot<Guid>
     public DateTime? ExpectedDeliveryDateUtc { get; set; }
     public string? Notes { get; set; }
 
+    public DateTime? SubmittedAtUtc { get; set; }
+    public string? SubmittedBy { get; set; }
+    public DateTime? ApprovedAtUtc { get; set; }
+    public string? ApprovedBy { get; set; }
+    public DateTime? RejectedAtUtc { get; set; }
+    public string? RejectedBy { get; set; }
+    public string? RejectionReason { get; set; }
+    public DateTime? CancelledAtUtc { get; set; }
+    public string? CancelledBy { get; set; }
+    public string? CancellationReason { get; set; }
+
     public ICollection<PurchaseOrderItem> Items { get; set; } = new List<PurchaseOrderItem>();
     public ICollection<GoodsReceipt> GoodsReceipts { get; set; } = new List<GoodsReceipt>();
-
-    public PurchaseOrder()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class GoodsReceiptItem : BaseEntity<Guid>
@@ -76,14 +72,15 @@ public class GoodsReceiptItem : BaseEntity<Guid>
     public Guid ProductId { get; set; }
     public Product Product { get; set; } = null!;
 
+    public int QuantityOrdered { get; set; }
     public int QuantityReceived { get; set; }
+    public int QuantityAccepted { get; set; }
+    public int QuantityRejected { get; set; }
+    public int QuantityDamaged { get; set; }
+    public string? RejectionReason { get; set; }
+
     public Money UnitPrice { get; set; } = Money.Zero();
     public Money LineTotal { get; set; } = Money.Zero();
-
-    public GoodsReceiptItem()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class GoodsReceipt : AggregateRoot<Guid>
@@ -100,9 +97,4 @@ public class GoodsReceipt : AggregateRoot<Guid>
     public string? Notes { get; set; }
 
     public ICollection<GoodsReceiptItem> Items { get; set; } = new List<GoodsReceiptItem>();
-
-    public GoodsReceipt()
-    {
-        Id = Guid.NewGuid();
-    }
 }

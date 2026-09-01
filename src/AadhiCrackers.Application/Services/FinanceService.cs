@@ -13,7 +13,21 @@ public interface IFinanceService
 {
     Task<PagedResult<InvoiceDto>> GetInvoicesAsync(int page = 1, int pageSize = 20, InvoiceStatus? status = null, CancellationToken cancellationToken = default);
     Task<PagedResult<PaymentDto>> GetPaymentsAsync(int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
+    Task<PaymentDto?> GetPaymentByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken = default);
+
+    // Refund Workflow (Phase 8)
+    Task<RefundDto> CreateRefundAsync(CreateRefundRequest request, CancellationToken cancellationToken = default);
+    Task<PagedResult<RefundDto>> GetRefundsAsync(int page = 1, int pageSize = 20, Guid? orderId = null, CancellationToken cancellationToken = default);
+    Task<RefundDto?> GetRefundByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
+    // Supplier Bills Workflow (Phase 18)
+    Task<SupplierBillDto> CreateSupplierBillAsync(CreateSupplierBillRequest request, CancellationToken cancellationToken = default);
+    Task<SupplierBillDto> PaySupplierBillAsync(Guid billId, PaySupplierBillRequest request, CancellationToken cancellationToken = default);
+    Task<PagedResult<SupplierBillDto>> GetSupplierBillsAsync(int page = 1, int pageSize = 20, Guid? supplierId = null, string? status = null, CancellationToken cancellationToken = default);
+    Task<SupplierBillDto?> GetSupplierBillByIdAsync(Guid billId, CancellationToken cancellationToken = default);
+
+    // Expenses & P&L
     Task<PagedResult<ExpenseDto>> GetExpensesAsync(int page = 1, int pageSize = 20, ExpenseCategory? category = null, CancellationToken cancellationToken = default);
     Task<ExpenseDto> CreateExpenseAsync(CreateExpenseRequest request, CancellationToken cancellationToken = default);
     Task<ProfitLossDto> GetProfitLossAsync(DateTime? fromDateUtc = null, DateTime? toDateUtc = null, CancellationToken cancellationToken = default);
@@ -24,15 +38,21 @@ public class FinanceService : IFinanceService
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditLogService _auditLog;
+    private readonly IOutboxService _outbox;
+    private readonly IBusinessNumberGenerator _numberGenerator;
 
     public FinanceService(
         IApplicationDbContext context,
         ICurrentUserService currentUser,
-        IAuditLogService auditLog)
+        IAuditLogService auditLog,
+        IOutboxService outbox,
+        IBusinessNumberGenerator numberGenerator)
     {
         _context = context;
         _currentUser = currentUser;
         _auditLog = auditLog;
+        _outbox = outbox;
+        _numberGenerator = numberGenerator;
     }
 
     public async Task<PagedResult<InvoiceDto>> GetInvoicesAsync(int page = 1, int pageSize = 20, InvoiceStatus? status = null, CancellationToken cancellationToken = default)
@@ -102,6 +122,8 @@ public class FinanceService : IFinanceService
                 PaymentMethod = p.PaymentMethod,
                 PaymentStatus = p.PaymentStatus,
                 TransactionReference = p.TransactionReference,
+                UtrNumber = p.UtrNumber,
+                IdempotencyKey = p.IdempotencyKey,
                 Notes = p.Notes,
                 PaidAtUtc = p.PaidAtUtc
             })
@@ -110,11 +132,82 @@ public class FinanceService : IFinanceService
         return new PagedResult<PaymentDto>(items, totalCount, page, pageSize);
     }
 
+    public async Task<PaymentDto?> GetPaymentByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var p = await _context.Payments
+            .AsNoTracking()
+            .Include(p => p.Order)
+            .Include(p => p.Customer)
+            .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, cancellationToken);
+
+        if (p == null) return null;
+
+        return new PaymentDto
+        {
+            Id = p.Id,
+            PaymentNumber = p.PaymentNumber,
+            OrderId = p.OrderId,
+            OrderNumber = p.Order?.OrderNumber,
+            CustomerId = p.CustomerId,
+            CustomerName = $"{p.Customer.FirstName} {p.Customer.LastName}".Trim(),
+            Amount = p.Amount.ToDecimal(),
+            PaymentMethod = p.PaymentMethod,
+            PaymentStatus = p.PaymentStatus,
+            TransactionReference = p.TransactionReference,
+            UtrNumber = p.UtrNumber,
+            IdempotencyKey = p.IdempotencyKey,
+            Notes = p.Notes,
+            PaidAtUtc = p.PaidAtUtc
+        };
+    }
+
     public async Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken = default)
     {
-        var count = await _context.Payments.CountAsync(cancellationToken) + 1;
-        var paymentNumber = $"PAY-{DateTime.UtcNow:yyyy}-{count:D6}";
+        if (request.Amount <= 0)
+            throw new DomainException("Payment amount must be greater than zero.");
 
+        // Idempotency check
+        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        {
+            var existingPayment = await _context.Payments
+                .Include(p => p.Order)
+                .Include(p => p.Customer)
+                .FirstOrDefaultAsync(p => p.IdempotencyKey == request.IdempotencyKey && !p.IsDeleted, cancellationToken);
+
+            if (existingPayment != null)
+            {
+                return new PaymentDto
+                {
+                    Id = existingPayment.Id,
+                    PaymentNumber = existingPayment.PaymentNumber,
+                    OrderId = existingPayment.OrderId,
+                    OrderNumber = existingPayment.Order?.OrderNumber,
+                    CustomerId = existingPayment.CustomerId,
+                    CustomerName = $"{existingPayment.Customer.FirstName} {existingPayment.Customer.LastName}".Trim(),
+                    Amount = existingPayment.Amount.ToDecimal(),
+                    PaymentMethod = existingPayment.PaymentMethod,
+                    PaymentStatus = existingPayment.PaymentStatus,
+                    TransactionReference = existingPayment.TransactionReference,
+                    UtrNumber = existingPayment.UtrNumber,
+                    IdempotencyKey = existingPayment.IdempotencyKey,
+                    Notes = existingPayment.Notes,
+                    PaidAtUtc = existingPayment.PaidAtUtc
+                };
+            }
+        }
+
+        // UTR duplicate check
+        if (!string.IsNullOrWhiteSpace(request.UtrNumber))
+        {
+            var utrExists = await _context.Payments
+                .AnyAsync(p => p.UtrNumber == request.UtrNumber && !p.IsDeleted, cancellationToken);
+            if (utrExists)
+            {
+                throw new DomainException($"A payment with UTR number '{request.UtrNumber}' has already been processed.");
+            }
+        }
+
+        var paymentNumber = await _numberGenerator.GeneratePaymentNumberAsync(cancellationToken);
         var payment = new Payment
         {
             PaymentNumber = paymentNumber,
@@ -124,29 +217,54 @@ public class FinanceService : IFinanceService
             PaymentMethod = request.PaymentMethod,
             PaymentStatus = PaymentStatus.Paid,
             TransactionReference = request.TransactionReference,
+            UtrNumber = request.UtrNumber,
+            IdempotencyKey = request.IdempotencyKey,
             Notes = request.Notes,
             PaidAtUtc = DateTime.UtcNow
         };
 
         if (request.OrderId.HasValue)
         {
-            var order = await _context.Orders.Include(o => o.Invoices).FirstOrDefaultAsync(o => o.Id == request.OrderId.Value, cancellationToken);
-            if (order != null)
+            var order = await _context.Orders
+                .Include(o => o.Invoices)
+                .FirstOrDefaultAsync(o => o.Id == request.OrderId.Value, cancellationToken)
+                ?? throw new ResourceNotFoundException(nameof(Order), request.OrderId.Value);
+
+            var remainingPaymentToApply = payment.Amount.AmountMinor;
+            foreach (var inv in order.Invoices.OrderBy(i => i.IssuedAtUtc))
             {
-                order.PaymentStatus = PaymentStatus.Paid;
-                foreach (var inv in order.Invoices)
+                if (remainingPaymentToApply <= 0) break;
+
+                var unpaidBalanceMinor = inv.GrandTotal.AmountMinor - inv.PaidAmount.AmountMinor;
+                if (unpaidBalanceMinor <= 0) continue;
+
+                var applyMinor = Math.Min(remainingPaymentToApply, unpaidBalanceMinor);
+                inv.PaidAmount = new Money(inv.PaidAmount.AmountMinor + applyMinor, inv.PaidAmount.Currency);
+                inv.BalanceAmount = new Money(inv.GrandTotal.AmountMinor - inv.PaidAmount.AmountMinor, inv.GrandTotal.Currency);
+                inv.Status = inv.BalanceAmount.AmountMinor == 0 ? InvoiceStatus.Paid : InvoiceStatus.PartiallyPaid;
+                remainingPaymentToApply -= applyMinor;
+            }
+
+            var allInvoicesPaid = order.Invoices.All(i => i.Status == InvoiceStatus.Paid);
+            order.PaymentStatus = allInvoicesPaid ? PaymentStatus.Paid : PaymentStatus.PartiallyPaid;
+
+            if (allInvoicesPaid && order.OrderStatus == OrderStatus.Pending)
+            {
+                order.OrderStatus = OrderStatus.Confirmed;
+                order.StatusHistories.Add(new OrderStatusHistory
                 {
-                    inv.PaidAmount += payment.Amount;
-                    inv.BalanceAmount = Math.Max(0, inv.GrandTotal.ToDecimal() - inv.PaidAmount.ToDecimal()) > 0
-                        ? Money.FromDecimal(inv.GrandTotal.ToDecimal() - inv.PaidAmount.ToDecimal())
-                        : Money.Zero();
-                    inv.Status = inv.BalanceAmount.AmountMinor == 0 ? InvoiceStatus.Paid : InvoiceStatus.PartiallyPaid;
-                }
+                    OrderId = order.Id,
+                    FromStatus = OrderStatus.Pending,
+                    ToStatus = OrderStatus.Confirmed,
+                    Reason = $"Full payment received via {payment.PaymentMethod} (#{payment.PaymentNumber})",
+                    ChangedBy = _currentUser.UserName ?? "FinanceService",
+                    ChangedAtUtc = DateTime.UtcNow
+                });
             }
         }
 
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
         _context.Payments.Add(payment);
-        await _context.SaveChangesAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.PaymentCreated,
@@ -154,8 +272,20 @@ public class FinanceService : IFinanceService
             nameof(Payment),
             payment.Id.ToString(),
             payment.PaymentNumber,
-            after: new { payment.PaymentNumber, Amount = payment.Amount.ToDecimal(), payment.PaymentMethod },
+            after: new { payment.PaymentNumber, Amount = payment.Amount.ToDecimal(), payment.PaymentMethod, payment.UtrNumber },
             cancellationToken: cancellationToken);
+
+        await _outbox.EnqueueAsync("PaymentRecorded", new
+        {
+            PaymentId = payment.Id,
+            payment.PaymentNumber,
+            payment.OrderId,
+            Amount = payment.Amount.ToDecimal(),
+            payment.PaymentMethod
+        }, cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         var cust = await _context.Customers.FindAsync(new object[] { payment.CustomerId }, cancellationToken);
 
@@ -170,8 +300,353 @@ public class FinanceService : IFinanceService
             PaymentMethod = payment.PaymentMethod,
             PaymentStatus = payment.PaymentStatus,
             TransactionReference = payment.TransactionReference,
+            UtrNumber = payment.UtrNumber,
+            IdempotencyKey = payment.IdempotencyKey,
             Notes = payment.Notes,
             PaidAtUtc = payment.PaidAtUtc
+        };
+    }
+
+    public async Task<RefundDto> CreateRefundAsync(CreateRefundRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.Amount <= 0)
+            throw new DomainException("Refund amount must be greater than zero.");
+
+        var order = await _context.Orders
+            .Include(o => o.Invoices)
+            .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken)
+            ?? throw new ResourceNotFoundException(nameof(Order), request.OrderId);
+
+        // Idempotency check
+        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        {
+            var existingRefund = await _context.Refunds
+                .FirstOrDefaultAsync(r => r.IdempotencyKey == request.IdempotencyKey && !r.IsDeleted, cancellationToken);
+            if (existingRefund != null)
+            {
+                return new RefundDto
+                {
+                    Id = existingRefund.Id,
+                    RefundNumber = existingRefund.RefundNumber,
+                    OrderId = existingRefund.OrderId,
+                    OrderNumber = order.OrderNumber,
+                    PaymentId = existingRefund.PaymentId,
+                    Amount = existingRefund.Amount.ToDecimal(),
+                    Reason = existingRefund.Reason,
+                    Method = existingRefund.Method,
+                    Status = existingRefund.Status,
+                    Reference = existingRefund.Reference,
+                    IdempotencyKey = existingRefund.IdempotencyKey,
+                    ProcessedAtUtc = existingRefund.ProcessedAtUtc
+                };
+            }
+        }
+
+        // Calculate total payments received for this order
+        var payments = await _context.Payments
+            .Where(p => p.OrderId == request.OrderId && p.PaymentStatus == PaymentStatus.Paid && !p.IsDeleted)
+            .Select(p => p.Amount)
+            .ToListAsync(cancellationToken);
+        var totalPaidMinor = payments.Sum(p => p.AmountMinor);
+
+        // Calculate total already refunded for this order
+        var refunds = await _context.Refunds
+            .Where(r => r.OrderId == request.OrderId && r.Status == "Completed" && !r.IsDeleted)
+            .Select(r => r.Amount)
+            .ToListAsync(cancellationToken);
+        var totalRefundedMinor = refunds.Sum(r => r.AmountMinor);
+
+        var requestedRefundMinor = Money.FromDecimal(request.Amount).AmountMinor;
+        var availableToRefundMinor = totalPaidMinor - totalRefundedMinor;
+
+        if (availableToRefundMinor <= 0)
+            throw new DomainException($"Order #{order.OrderNumber} has no refundable balance left (Total Paid: ₹{totalPaidMinor / 100m:N2}, Already Refunded: ₹{totalRefundedMinor / 100m:N2}).");
+
+        if (requestedRefundMinor > availableToRefundMinor)
+            throw new DomainException($"Requested refund of ₹{request.Amount:N2} exceeds available refundable amount of ₹{availableToRefundMinor / 100m:N2}.");
+
+        var refundNumber = await _numberGenerator.GenerateRefundNumberAsync(cancellationToken);
+        var refund = new Refund
+        {
+            RefundNumber = refundNumber,
+            OrderId = order.Id,
+            PaymentId = request.PaymentId,
+            Amount = Money.FromDecimal(request.Amount),
+            Reason = request.Reason,
+            Method = request.Method,
+            Status = "Completed",
+            Reference = request.Reference,
+            IdempotencyKey = request.IdempotencyKey,
+            ProcessedAtUtc = DateTime.UtcNow
+        };
+
+        // Adjust payment status on order
+        if (totalRefundedMinor + requestedRefundMinor >= totalPaidMinor)
+        {
+            order.PaymentStatus = PaymentStatus.Refunded;
+        }
+        else
+        {
+            order.PaymentStatus = PaymentStatus.PartiallyPaid;
+        }
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+        _context.Refunds.Add(refund);
+
+        await _auditLog.LogAsync(
+            AuditAction.RefundProcessed,
+            "Finance",
+            nameof(Refund),
+            refund.Id.ToString(),
+            refund.RefundNumber,
+            after: new { refund.RefundNumber, refund.OrderId, Amount = refund.Amount.ToDecimal(), refund.Reason },
+            cancellationToken: cancellationToken);
+
+        await _outbox.EnqueueAsync("RefundProcessed", new
+        {
+            RefundId = refund.Id,
+            refund.RefundNumber,
+            order.OrderNumber,
+            Amount = refund.Amount.ToDecimal(),
+            refund.Reason
+        }, cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return new RefundDto
+        {
+            Id = refund.Id,
+            RefundNumber = refund.RefundNumber,
+            OrderId = refund.OrderId,
+            OrderNumber = order.OrderNumber,
+            PaymentId = refund.PaymentId,
+            Amount = refund.Amount.ToDecimal(),
+            Reason = refund.Reason,
+            Method = refund.Method,
+            Status = refund.Status,
+            Reference = refund.Reference,
+            IdempotencyKey = refund.IdempotencyKey,
+            ProcessedAtUtc = refund.ProcessedAtUtc
+        };
+    }
+
+    public async Task<PagedResult<RefundDto>> GetRefundsAsync(int page = 1, int pageSize = 20, Guid? orderId = null, CancellationToken cancellationToken = default)
+    {
+        var query = _context.Refunds
+            .AsNoTracking()
+            .Include(r => r.Order)
+            .Where(r => !r.IsDeleted);
+
+        if (orderId.HasValue)
+            query = query.Where(r => r.OrderId == orderId.Value);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
+            .OrderByDescending(r => r.ProcessedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(r => new RefundDto
+            {
+                Id = r.Id,
+                RefundNumber = r.RefundNumber,
+                OrderId = r.OrderId,
+                OrderNumber = r.Order.OrderNumber,
+                PaymentId = r.PaymentId,
+                Amount = r.Amount.ToDecimal(),
+                Reason = r.Reason,
+                Method = r.Method,
+                Status = r.Status,
+                Reference = r.Reference,
+                IdempotencyKey = r.IdempotencyKey,
+                ProcessedAtUtc = r.ProcessedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<RefundDto>(items, totalCount, page, pageSize);
+    }
+
+    public async Task<RefundDto?> GetRefundByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var r = await _context.Refunds
+            .AsNoTracking()
+            .Include(r => r.Order)
+            .FirstOrDefaultAsync(r => r.Id == id && !r.IsDeleted, cancellationToken);
+
+        if (r == null) return null;
+
+        return new RefundDto
+        {
+            Id = r.Id,
+            RefundNumber = r.RefundNumber,
+            OrderId = r.OrderId,
+            OrderNumber = r.Order.OrderNumber,
+            PaymentId = r.PaymentId,
+            Amount = r.Amount.ToDecimal(),
+            Reason = r.Reason,
+            Method = r.Method,
+            Status = r.Status,
+            Reference = r.Reference,
+            IdempotencyKey = r.IdempotencyKey,
+            ProcessedAtUtc = r.ProcessedAtUtc
+        };
+    }
+
+    public async Task<SupplierBillDto> CreateSupplierBillAsync(CreateSupplierBillRequest request, CancellationToken cancellationToken = default)
+    {
+        var supplier = await _context.Suppliers.FindAsync(new object[] { request.SupplierId }, cancellationToken)
+            ?? throw new ResourceNotFoundException(nameof(Supplier), request.SupplierId);
+
+        var subtotal = Money.FromDecimal(request.Subtotal);
+        var tax = Money.FromDecimal(request.Tax);
+        var discount = Money.FromDecimal(request.Discount);
+        var total = subtotal + tax - discount;
+
+        var billNumber = await _numberGenerator.GenerateSupplierBillNumberAsync(cancellationToken);
+        var bill = new SupplierBill
+        {
+            BillNumber = billNumber,
+            SupplierId = supplier.Id,
+            PurchaseOrderId = request.PurchaseOrderId,
+            GoodsReceiptId = request.GoodsReceiptId,
+            Subtotal = subtotal,
+            Tax = tax,
+            Discount = discount,
+            Total = total,
+            PaidAmount = Money.Zero(),
+            BalanceAmount = total,
+            DueDateUtc = request.DueDateUtc ?? DateTime.UtcNow.AddDays(30),
+            Status = "Issued"
+        };
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+        _context.SupplierBills.Add(bill);
+
+        await _auditLog.LogAsync(
+            AuditAction.Create,
+            "Finance",
+            nameof(SupplierBill),
+            bill.Id.ToString(),
+            bill.BillNumber,
+            after: new { bill.BillNumber, bill.SupplierId, Total = bill.Total.ToDecimal() },
+            cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return (await GetSupplierBillByIdAsync(bill.Id, cancellationToken))!;
+    }
+
+    public async Task<SupplierBillDto> PaySupplierBillAsync(Guid billId, PaySupplierBillRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.Amount <= 0)
+            throw new DomainException("Payment amount must be greater than zero.");
+
+        var bill = await _context.SupplierBills
+            .Include(b => b.Supplier)
+            .FirstOrDefaultAsync(b => b.Id == billId, cancellationToken)
+            ?? throw new ResourceNotFoundException(nameof(SupplierBill), billId);
+
+        var payMinor = Money.FromDecimal(request.Amount).AmountMinor;
+        if (payMinor > bill.BalanceAmount.AmountMinor)
+            throw new DomainException($"Payment amount ₹{request.Amount:N2} exceeds remaining bill balance ₹{bill.BalanceAmount.ToDecimal():N2}.");
+
+        bill.PaidAmount = new Money(bill.PaidAmount.AmountMinor + payMinor, bill.PaidAmount.Currency);
+        bill.BalanceAmount = new Money(bill.Total.AmountMinor - bill.PaidAmount.AmountMinor, bill.Total.Currency);
+        bill.Status = bill.BalanceAmount.AmountMinor == 0 ? "Paid" : "PartiallyPaid";
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+
+        await _auditLog.LogAsync(
+            AuditAction.Update,
+            "Finance",
+            nameof(SupplierBill),
+            bill.Id.ToString(),
+            bill.BillNumber,
+            after: new { bill.BillNumber, PaidAmount = bill.PaidAmount.ToDecimal(), Balance = bill.BalanceAmount.ToDecimal(), bill.Status },
+            cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return (await GetSupplierBillByIdAsync(bill.Id, cancellationToken))!;
+    }
+
+    public async Task<PagedResult<SupplierBillDto>> GetSupplierBillsAsync(int page = 1, int pageSize = 20, Guid? supplierId = null, string? status = null, CancellationToken cancellationToken = default)
+    {
+        var query = _context.SupplierBills
+            .AsNoTracking()
+            .Include(b => b.Supplier)
+            .Include(b => b.PurchaseOrder)
+            .Include(b => b.GoodsReceipt)
+            .Where(b => !b.IsDeleted);
+
+        if (supplierId.HasValue)
+            query = query.Where(b => b.SupplierId == supplierId.Value);
+
+        if (!string.IsNullOrWhiteSpace(status))
+            query = query.Where(b => b.Status.ToLower() == status.Trim().ToLower());
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
+            .OrderByDescending(b => b.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(b => new SupplierBillDto
+            {
+                Id = b.Id,
+                BillNumber = b.BillNumber,
+                SupplierId = b.SupplierId,
+                SupplierName = b.Supplier.Name,
+                PurchaseOrderId = b.PurchaseOrderId,
+                PoNumber = b.PurchaseOrder != null ? b.PurchaseOrder.PoNumber : null,
+                GoodsReceiptId = b.GoodsReceiptId,
+                GrnNumber = b.GoodsReceipt != null ? b.GoodsReceipt.ReceiptNumber : null,
+                Subtotal = b.Subtotal.ToDecimal(),
+                Tax = b.Tax.ToDecimal(),
+                Discount = b.Discount.ToDecimal(),
+                Total = b.Total.ToDecimal(),
+                PaidAmount = b.PaidAmount.ToDecimal(),
+                BalanceAmount = b.BalanceAmount.ToDecimal(),
+                DueDateUtc = b.DueDateUtc,
+                Status = b.Status
+            })
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<SupplierBillDto>(items, totalCount, page, pageSize);
+    }
+
+    public async Task<SupplierBillDto?> GetSupplierBillByIdAsync(Guid billId, CancellationToken cancellationToken = default)
+    {
+        var b = await _context.SupplierBills
+            .AsNoTracking()
+            .Include(b => b.Supplier)
+            .Include(b => b.PurchaseOrder)
+            .Include(b => b.GoodsReceipt)
+            .FirstOrDefaultAsync(b => b.Id == billId && !b.IsDeleted, cancellationToken);
+
+        if (b == null) return null;
+
+        return new SupplierBillDto
+        {
+            Id = b.Id,
+            BillNumber = b.BillNumber,
+            SupplierId = b.SupplierId,
+            SupplierName = b.Supplier.Name,
+            PurchaseOrderId = b.PurchaseOrderId,
+            PoNumber = b.PurchaseOrder?.PoNumber,
+            GoodsReceiptId = b.GoodsReceiptId,
+            GrnNumber = b.GoodsReceipt?.ReceiptNumber,
+            Subtotal = b.Subtotal.ToDecimal(),
+            Tax = b.Tax.ToDecimal(),
+            Discount = b.Discount.ToDecimal(),
+            Total = b.Total.ToDecimal(),
+            PaidAmount = b.PaidAmount.ToDecimal(),
+            BalanceAmount = b.BalanceAmount.ToDecimal(),
+            DueDateUtc = b.DueDateUtc,
+            Status = b.Status
         };
     }
 
@@ -208,8 +683,7 @@ public class FinanceService : IFinanceService
 
     public async Task<ExpenseDto> CreateExpenseAsync(CreateExpenseRequest request, CancellationToken cancellationToken = default)
     {
-        var count = await _context.Expenses.CountAsync(cancellationToken) + 1;
-        var expenseNumber = $"EXP-{DateTime.UtcNow:yyyy}-{count:D6}";
+        var expenseNumber = await _numberGenerator.GenerateExpenseNumberAsync(cancellationToken);
 
         var expense = new Expense
         {
@@ -225,7 +699,7 @@ public class FinanceService : IFinanceService
         };
 
         _context.Expenses.Add(expense);
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Create,
@@ -235,6 +709,9 @@ public class FinanceService : IFinanceService
             expense.ExpenseNumber,
             after: new { expense.ExpenseNumber, Amount = expense.Amount.ToDecimal(), Category = expense.Category.ToString() },
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return new ExpenseDto
         {
@@ -275,8 +752,9 @@ public class FinanceService : IFinanceService
         var orders = await ordersQuery.ToListAsync(cancellationToken);
         var expenses = await expensesQuery.ToListAsync(cancellationToken);
 
-        decimal totalRevenue = orders.Sum(o => o.GrandTotal.ToDecimal());
-        decimal cogs = orders.SelectMany(o => o.Items).Sum(i => i.Quantity * (i.UnitPrice.ToDecimal() * 0.65m)); // Approximate 65% cost price
+        // Net Sales = Subtotal - Discount (earned revenue excluding statutory taxes and carrier shipping)
+        decimal totalRevenue = orders.Sum(o => o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal());
+        decimal cogs = orders.SelectMany(o => o.Items).Sum(i => i.Quantity * i.CostPriceSnapshot.ToDecimal());
         decimal totalExpenses = expenses.Sum(e => e.Amount.ToDecimal());
 
         return new ProfitLossDto

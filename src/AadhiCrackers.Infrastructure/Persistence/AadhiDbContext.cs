@@ -55,6 +55,12 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     {
     }
 
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    }
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         base.ConfigureConventions(configurationBuilder);
@@ -79,8 +85,12 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.Property(p => p.SKU).IsRequired().HasMaxLength(50);
             b.Property(p => p.Name).IsRequired().HasMaxLength(150);
             b.Property(p => p.Slug).IsRequired().HasMaxLength(200);
+            b.Property(p => p.Price).HasPrecision(18, 2);
+            b.Property(p => p.CompareAtPrice).HasPrecision(18, 2);
+            b.Property(p => p.CostPrice).HasPrecision(18, 2);
             b.Property(p => p.TaxRate).HasPrecision(5, 2);
-            b.Property(p => p.DiscountValue).HasPrecision(18, 2);
+            b.Property(p => p.RowVersion).IsConcurrencyToken();
+            b.HasQueryFilter(p => !p.IsDeleted);
 
             b.HasOne(p => p.Category)
                 .WithMany(c => c.Products)
@@ -177,6 +187,26 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
                 .HasForeignKey(o => o.CustomerId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            b.HasMany(o => o.Items)
+                .WithOne(oi => oi.Order)
+                .HasForeignKey(oi => oi.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasMany(o => o.StatusHistories)
+                .WithOne(h => h.Order)
+                .HasForeignKey(h => h.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasMany(o => o.Invoices)
+                .WithOne(i => i.Order)
+                .HasForeignKey(i => i.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasMany(o => o.Payments)
+                .WithOne(p => p.Order)
+                .HasForeignKey(p => p.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             b.HasQueryFilter(o => !o.IsDeleted);
         });
 
@@ -186,11 +216,23 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasKey(oi => oi.Id);
             b.Property(oi => oi.ProductNameSnapshot).IsRequired().HasMaxLength(150);
             b.Property(oi => oi.SKUSnapshot).IsRequired().HasMaxLength(50);
+        });
 
-            b.HasOne(oi => oi.Order)
-                .WithMany(o => o.Items)
-                .HasForeignKey(oi => oi.OrderId)
-                .OnDelete(DeleteBehavior.Cascade);
+        // OrderStatusHistory Configuration
+        builder.Entity<OrderStatusHistory>(b =>
+        {
+            b.HasKey(h => h.Id);
+            b.HasIndex(h => h.OrderId);
+            b.HasIndex(h => h.ChangedAtUtc);
+        });
+
+        // Warehouse Configuration
+        builder.Entity<Warehouse>(b =>
+        {
+            b.HasKey(w => w.Id);
+            b.HasIndex(w => w.Code).IsUnique();
+            b.Property(w => w.Code).IsRequired().HasMaxLength(50);
+            b.Property(w => w.Name).IsRequired().HasMaxLength(150);
         });
 
         // StockItem Configuration
@@ -198,6 +240,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
         {
             b.HasKey(s => s.Id);
             b.HasIndex(s => new { s.ProductId, s.WarehouseId }).IsUnique();
+            b.Property(s => s.RowVersion).IsConcurrencyToken();
 
             b.HasOne(s => s.Product)
                 .WithMany()
@@ -218,6 +261,63 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(m => m.WarehouseId);
             b.HasIndex(m => m.CreatedAtUtc);
             b.Property(m => m.Reason).IsRequired().HasMaxLength(250);
+        });
+
+        // ProductCategory Configuration
+        builder.Entity<ProductCategory>(b =>
+        {
+            b.HasKey(pc => new { pc.ProductId, pc.CategoryId });
+
+            b.HasOne(pc => pc.Product)
+                .WithMany(p => p.ProductCategories)
+                .HasForeignKey(pc => pc.ProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasOne(pc => pc.Category)
+                .WithMany(c => c.ProductCategories)
+                .HasForeignKey(pc => pc.CategoryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ProductVariant Configuration
+        builder.Entity<ProductVariant>(b =>
+        {
+            b.HasKey(pv => pv.Id);
+            b.HasIndex(pv => pv.SKU).IsUnique();
+            b.Property(pv => pv.SKU).IsRequired().HasMaxLength(50);
+            b.Property(pv => pv.Name).IsRequired().HasMaxLength(150);
+
+            b.HasOne(pv => pv.Product)
+                .WithMany(p => p.Variants)
+                .HasForeignKey(pv => pv.ProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // GiftBoxItem Configuration
+        builder.Entity<GiftBoxItem>(b =>
+        {
+            b.HasKey(g => g.Id);
+            b.HasIndex(g => new { g.ParentProductId, g.ComponentProductId }).IsUnique();
+
+            b.HasOne(g => g.ParentProduct)
+                .WithMany(p => p.BundleComponents)
+                .HasForeignKey(g => g.ParentProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasOne(g => g.ComponentProduct)
+                .WithMany()
+                .HasForeignKey(g => g.ComponentProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ProductReview Configuration
+        builder.Entity<ProductReview>(b =>
+        {
+            b.HasKey(r => r.Id);
+            b.HasIndex(r => r.ProductId);
+            b.HasIndex(r => r.CreatedAtUtc);
+            b.Property(r => r.Comment).HasMaxLength(1000);
+            b.Property(r => r.CustomerName).HasMaxLength(100);
         });
 
         // Supplier Configuration
@@ -242,6 +342,35 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
                 .OnDelete(DeleteBehavior.Restrict);
 
             b.HasQueryFilter(po => !po.IsDeleted);
+        });
+
+        // PurchaseOrderItem Configuration
+        builder.Entity<PurchaseOrderItem>(b =>
+        {
+            b.HasKey(poi => poi.Id);
+            b.HasOne(poi => poi.PurchaseOrder)
+                .WithMany(po => po.Items)
+                .HasForeignKey(poi => poi.PurchaseOrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // GoodsReceipt Configuration
+        builder.Entity<GoodsReceipt>(b =>
+        {
+            b.HasKey(g => g.Id);
+            b.HasIndex(g => g.ReceiptNumber).IsUnique();
+            b.HasIndex(g => g.PurchaseOrderId);
+            b.Property(g => g.ReceiptNumber).IsRequired().HasMaxLength(50);
+        });
+
+        // GoodsReceiptItem Configuration
+        builder.Entity<GoodsReceiptItem>(b =>
+        {
+            b.HasKey(gi => gi.Id);
+            b.HasOne(gi => gi.GoodsReceipt)
+                .WithMany(g => g.Items)
+                .HasForeignKey(gi => gi.GoodsReceiptId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Invoice Configuration
@@ -273,6 +402,43 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasQueryFilter(p => !p.IsDeleted);
         });
 
+        // Refund Configuration
+        builder.Entity<Refund>(b =>
+        {
+            b.HasKey(r => r.Id);
+            b.HasIndex(r => r.RefundNumber).IsUnique();
+            b.HasIndex(r => r.OrderId);
+            b.HasIndex(r => r.PaymentId);
+        });
+
+        // SupplierBill Configuration
+        builder.Entity<SupplierBill>(b =>
+        {
+            b.HasKey(sb => sb.Id);
+            b.HasIndex(sb => sb.BillNumber).IsUnique();
+            b.HasIndex(sb => sb.SupplierId);
+            b.HasIndex(sb => sb.PurchaseOrderId);
+        });
+
+        // ReturnOrder Configuration
+        builder.Entity<ReturnOrder>(b =>
+        {
+            b.HasKey(ro => ro.Id);
+            b.HasIndex(ro => ro.ReturnNumber).IsUnique();
+            b.HasIndex(ro => ro.OrderId);
+            b.HasIndex(ro => ro.CustomerId);
+        });
+
+        // ReturnOrderItem Configuration
+        builder.Entity<ReturnOrderItem>(b =>
+        {
+            b.HasKey(ri => ri.Id);
+            b.HasOne(ri => ri.ReturnOrder)
+                .WithMany(ro => ro.Items)
+                .HasForeignKey(ri => ri.ReturnOrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // Expense Configuration
         builder.Entity<Expense>(b =>
         {
@@ -291,6 +457,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(p => p.Code).IsUnique();
             b.Property(p => p.Code).IsRequired().HasMaxLength(50);
             b.Property(p => p.DiscountValue).HasPrecision(18, 2);
+            b.Property(p => p.RowVersion).IsConcurrencyToken();
             b.HasQueryFilter(p => !p.IsDeleted);
         });
 
@@ -323,19 +490,63 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.Property(s => s.Key).IsRequired().HasMaxLength(100);
             b.HasQueryFilter(s => !s.IsDeleted);
         });
+
+        // LoginHistory Configuration
+        builder.Entity<LoginHistory>(b =>
+        {
+            b.HasKey(l => l.Id);
+            b.HasIndex(l => l.TimestampUtc);
+            b.HasIndex(l => l.UserId);
+            b.HasIndex(l => l.Email);
+        });
+
+        // RateLimitLog Configuration
+        builder.Entity<RateLimitLog>(b =>
+        {
+            b.HasKey(r => r.Id);
+            b.HasIndex(r => r.TimestampUtc);
+            b.HasIndex(r => r.Endpoint);
+            b.HasIndex(r => r.IpAddress);
+        });
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var entry in ChangeTracker.Entries<BaseEntity<Guid>>())
+        foreach (var entry in ChangeTracker.Entries())
         {
-            if (entry.State == EntityState.Added)
+            if (entry.Entity is BaseEntity<Guid> baseEntity)
             {
-                entry.Entity.CreatedAtUtc = DateTime.UtcNow;
+                if (entry.State == EntityState.Added)
+                {
+                    if (baseEntity.Id == Guid.Empty)
+                    {
+                        baseEntity.Id = Guid.NewGuid();
+                    }
+                    if (baseEntity.CreatedAtUtc == default)
+                    {
+                        baseEntity.CreatedAtUtc = DateTime.UtcNow;
+                    }
+                }
+                else if (entry.State == EntityState.Modified)
+                {
+                    baseEntity.UpdatedAtUtc = DateTime.UtcNow;
+                }
             }
-            else if (entry.State == EntityState.Modified)
+
+            if (entry.State == EntityState.Modified)
             {
-                entry.Entity.UpdatedAtUtc = DateTime.UtcNow;
+                if (entry.Entity is Product product)
+                {
+                    product.RowVersion = Guid.NewGuid();
+                }
+                else if (entry.Entity is StockItem stockItem)
+                {
+                    stockItem.RowVersion = Guid.NewGuid();
+                }
+                else if (entry.Entity is Promotion promotion)
+                {
+                    promotion.RowVersion = Guid.NewGuid();
+                }
             }
         }
 

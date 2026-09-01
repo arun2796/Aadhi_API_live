@@ -57,6 +57,7 @@ public class SettingsService : ISettingsService
 
     public async Task<bool> UpdateSettingAsync(string key, string value, CancellationToken cancellationToken = default)
     {
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
         var setting = await _context.SystemSettings.FirstOrDefaultAsync(s => s.Key.ToLower() == key.ToLower() && !s.IsDeleted, cancellationToken);
         if (setting == null)
         {
@@ -86,6 +87,7 @@ public class SettingsService : ISettingsService
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return true;
     }
 }

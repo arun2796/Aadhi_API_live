@@ -68,7 +68,6 @@ public class CatalogService : ICatalogService
             .ThenBy(c => c.Name)
             .ToListAsync(cancellationToken);
 
-        // Build hierarchical tree for root categories (ParentCategoryId == null)
         return categories
             .Where(c => c.ParentCategoryId == null)
             .Select(c => MapCategoryToDto(c, categories))
@@ -115,6 +114,13 @@ public class CatalogService : ICatalogService
 
     public async Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequest request, CancellationToken cancellationToken = default)
     {
+        if (request.ParentCategoryId.HasValue)
+        {
+            var parentExists = await _context.Categories.AnyAsync(c => c.Id == request.ParentCategoryId.Value && !c.IsDeleted, cancellationToken);
+            if (!parentExists)
+                throw new ResourceNotFoundException(nameof(Category), request.ParentCategoryId.Value);
+        }
+
         var slug = GenerateSlug(request.Name);
         var category = new Category
         {
@@ -130,7 +136,7 @@ public class CatalogService : ICatalogService
         };
 
         _context.Categories.Add(category);
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Create,
@@ -140,6 +146,9 @@ public class CatalogService : ICatalogService
             category.Name,
             after: category,
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return new CategoryDto
         {
@@ -159,6 +168,23 @@ public class CatalogService : ICatalogService
         var category = await _context.Categories.FirstOrDefaultAsync(c => c.Id == request.Id && !c.IsDeleted, cancellationToken)
             ?? throw new ResourceNotFoundException(nameof(Category), request.Id);
 
+        if (request.ParentCategoryId == category.Id)
+            throw new DomainException("Category cannot be its own parent.");
+
+        if (request.ParentCategoryId.HasValue)
+        {
+            // Check for circular dependency
+            var currentParentId = request.ParentCategoryId;
+            while (currentParentId.HasValue)
+            {
+                if (currentParentId.Value == category.Id)
+                    throw new DomainException("Circular parent category relationship is not allowed.");
+
+                var parent = await _context.Categories.AsNoTracking().FirstOrDefaultAsync(c => c.Id == currentParentId.Value && !c.IsDeleted, cancellationToken);
+                currentParentId = parent?.ParentCategoryId;
+            }
+        }
+
         var before = new { category.Name, category.Slug, category.Description, category.IsActive };
 
         category.Name = request.Name.Trim();
@@ -172,7 +198,7 @@ public class CatalogService : ICatalogService
         category.SeoDescription = request.SeoDescription;
         category.UpdatedAtUtc = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Update,
@@ -183,6 +209,9 @@ public class CatalogService : ICatalogService
             before: before,
             after: category,
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return new CategoryDto
         {
@@ -202,10 +231,18 @@ public class CatalogService : ICatalogService
         var category = await _context.Categories.FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted, cancellationToken);
         if (category == null) return false;
 
+        var hasProducts = await _context.Products.AnyAsync(p => p.CategoryId == id && !p.IsDeleted, cancellationToken);
+        if (hasProducts)
+            throw new DomainException("Cannot delete category because it contains active products. Reassign or delete products first.");
+
+        var hasSubcategories = await _context.Categories.AnyAsync(c => c.ParentCategoryId == id && !c.IsDeleted, cancellationToken);
+        if (hasSubcategories)
+            throw new DomainException("Cannot delete category because it has subcategories. Reassign or delete subcategories first.");
+
         category.IsDeleted = true;
         category.UpdatedAtUtc = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Delete,
@@ -214,6 +251,9 @@ public class CatalogService : ICatalogService
             category.Id.ToString(),
             category.Name,
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return true;
     }
@@ -258,7 +298,7 @@ public class CatalogService : ICatalogService
         };
 
         _context.Brands.Add(brand);
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Create,
@@ -269,6 +309,9 @@ public class CatalogService : ICatalogService
             after: brand,
             cancellationToken: cancellationToken);
 
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
         return new BrandDto
         {
             Id = brand.Id,
@@ -276,7 +319,8 @@ public class CatalogService : ICatalogService
             Slug = brand.Slug,
             Description = brand.Description,
             LogoUrl = brand.LogoUrl,
-            IsActive = brand.IsActive
+            IsActive = brand.IsActive,
+            ProductCount = 0
         };
     }
 
@@ -287,61 +331,38 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.ProductCategories)
             .Where(p => !p.IsDeleted);
+
+        if (filter.ProductType.HasValue)
+            query = query.Where(p => p.ProductType == filter.ProductType.Value);
 
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
             var s = filter.Search.Trim().ToLower();
-            query = query.Where(p =>
-                p.Name.ToLower().Contains(s) ||
-                p.SKU.ToLower().Contains(s) ||
-                p.Category.Name.ToLower().Contains(s) ||
-                (p.Brand != null && p.Brand.Name.ToLower().Contains(s)));
+            query = query.Where(p => p.Name.ToLower().Contains(s) || p.SKU.ToLower().Contains(s) || p.Description.ToLower().Contains(s));
         }
 
         if (filter.CategoryId.HasValue)
         {
-            var catId = filter.CategoryId.Value;
-            var subCategoryIds = await _context.Categories
-                .Where(c => c.ParentCategoryId == catId && !c.IsDeleted)
-                .Select(c => c.Id)
-                .ToListAsync(cancellationToken);
-
-            subCategoryIds.Add(catId);
-            query = query.Where(p => subCategoryIds.Contains(p.CategoryId));
+            query = query.Where(p => p.CategoryId == filter.CategoryId.Value || p.ProductCategories.Any(pc => pc.CategoryId == filter.CategoryId.Value));
         }
         else if (!string.IsNullOrWhiteSpace(filter.CategorySlug))
         {
-            var cat = await _context.Categories.FirstOrDefaultAsync(c => c.Slug.ToLower() == filter.CategorySlug.ToLower() && !c.IsDeleted, cancellationToken);
-            if (cat != null)
-            {
-                var subCategoryIds = await _context.Categories
-                    .Where(c => c.ParentCategoryId == cat.Id && !c.IsDeleted)
-                    .Select(c => c.Id)
-                    .ToListAsync(cancellationToken);
-
-                subCategoryIds.Add(cat.Id);
-                query = query.Where(p => subCategoryIds.Contains(p.CategoryId));
-            }
+            query = query.Where(p => p.Category.Slug.ToLower() == filter.CategorySlug.ToLower() || p.ProductCategories.Any(pc => pc.Category.Slug.ToLower() == filter.CategorySlug.ToLower()));
         }
 
         if (filter.BrandId.HasValue)
             query = query.Where(p => p.BrandId == filter.BrandId.Value);
 
         if (filter.MinPrice.HasValue)
-        {
-            var minMinor = (long)(filter.MinPrice.Value * 100);
-            query = query.Where(p => p.Price.AmountMinor >= minMinor);
-        }
+            query = query.Where(p => p.Price.AmountMinor >= Money.FromDecimal(filter.MinPrice.Value).AmountMinor);
 
         if (filter.MaxPrice.HasValue)
-        {
-            var maxMinor = (long)(filter.MaxPrice.Value * 100);
-            query = query.Where(p => p.Price.AmountMinor <= maxMinor);
-        }
+            query = query.Where(p => p.Price.AmountMinor <= Money.FromDecimal(filter.MaxPrice.Value).AmountMinor);
 
         if (filter.InStockOnly == true)
-            query = query.Where(p => (p.StockQuantity - p.ReservedQuantity) > 0);
+            query = query.Where(p => p.StockQuantity > p.ReservedQuantity);
 
         if (filter.IsFeatured == true)
             query = query.Where(p => p.IsFeatured);
@@ -352,14 +373,13 @@ public class CatalogService : ICatalogService
         if (filter.IsNewArrival == true)
             query = query.Where(p => p.IsNewArrival);
 
-        // Sorting
-        query = filter.SortBy?.ToLower() switch
+        query = filter.SortBy switch
         {
             "price_asc" => query.OrderBy(p => p.Price.AmountMinor),
             "price_desc" => query.OrderByDescending(p => p.Price.AmountMinor),
-            "name_asc" => query.OrderBy(p => p.Name),
             "new" => query.OrderByDescending(p => p.CreatedAtUtc),
-            _ => query.OrderByDescending(p => p.IsBestSeller).ThenByDescending(p => p.IsFeatured).ThenBy(p => p.Name)
+            "name_asc" => query.OrderBy(p => p.Name),
+            _ => query.OrderByDescending(p => p.IsFeatured).ThenByDescending(p => p.IsBestSeller).ThenBy(p => p.Name)
         };
 
         var totalCount = await query.CountAsync(cancellationToken);
@@ -380,6 +400,10 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Variants)
+            .Include(p => p.ProductCategories)
+            .Include(p => p.BundleComponents)
+                .ThenInclude(b => b.ComponentProduct)
             .FirstOrDefaultAsync(p => p.Slug.ToLower() == slug.ToLower() && !p.IsDeleted, cancellationToken);
 
         if (product == null) return null;
@@ -404,6 +428,10 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Variants)
+            .Include(p => p.ProductCategories)
+            .Include(p => p.BundleComponents)
+                .ThenInclude(b => b.ComponentProduct)
             .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, cancellationToken);
 
         if (product == null) return null;
@@ -415,7 +443,6 @@ public class CatalogService : ICatalogService
     {
         var slug = GenerateSlug(request.Name);
 
-        // Ensure unique SKU
         if (await _context.Products.AnyAsync(p => p.SKU.ToLower() == request.SKU.ToLower() && !p.IsDeleted, cancellationToken))
         {
             throw new DomainException($"Product with SKU '{request.SKU}' already exists.");
@@ -428,6 +455,7 @@ public class CatalogService : ICatalogService
             Slug = slug,
             Description = request.Description,
             ShortDescription = request.ShortDescription,
+            ProductType = request.ProductType,
             CategoryId = request.CategoryId,
             BrandId = request.BrandId,
             Price = Money.FromDecimal(request.Price),
@@ -449,6 +477,60 @@ public class CatalogService : ICatalogService
             SafetyInformation = request.SafetyInformation
         };
 
+        // Primary Category Link
+        product.ProductCategories.Add(new ProductCategory
+        {
+            ProductId = product.Id,
+            CategoryId = request.CategoryId,
+            IsPrimary = true
+        });
+
+        if (request.AdditionalCategoryIds != null)
+        {
+            foreach (var catId in request.AdditionalCategoryIds.Where(id => id != request.CategoryId).Distinct())
+            {
+                product.ProductCategories.Add(new ProductCategory
+                {
+                    ProductId = product.Id,
+                    CategoryId = catId,
+                    IsPrimary = false
+                });
+            }
+        }
+
+        // Variants
+        if (request.Variants != null)
+        {
+            foreach (var v in request.Variants)
+            {
+                product.Variants.Add(new ProductVariant
+                {
+                    ProductId = product.Id,
+                    SKU = v.SKU.Trim().ToUpperInvariant(),
+                    Name = v.Name.Trim(),
+                    Price = Money.FromDecimal(v.Price),
+                    CostPrice = Money.FromDecimal(v.CostPrice),
+                    StockQuantity = v.StockQuantity,
+                    IsActive = v.IsActive
+                });
+            }
+        }
+
+        // Bundle BOM components
+        if (request.BundleComponents != null)
+        {
+            product.ProductType = ProductType.Bundle;
+            foreach (var b in request.BundleComponents)
+            {
+                product.BundleComponents.Add(new GiftBoxItem
+                {
+                    ParentProductId = product.Id,
+                    ComponentProductId = b.ComponentProductId,
+                    Quantity = b.Quantity
+                });
+            }
+        }
+
         int sortOrder = 0;
         foreach (var url in request.ImageUrls)
         {
@@ -465,7 +547,9 @@ public class CatalogService : ICatalogService
         _context.Products.Add(product);
 
         // Default warehouse stock item
-        var primaryWarehouse = await _context.Warehouses.FirstOrDefaultAsync(w => w.IsPrimary && !w.IsDeleted, cancellationToken);
+        var primaryWarehouse = await _context.Warehouses.FirstOrDefaultAsync(w => w.IsPrimary && !w.IsDeleted, cancellationToken)
+            ?? await _context.Warehouses.FirstOrDefaultAsync(w => w.IsActive && !w.IsDeleted, cancellationToken);
+
         if (primaryWarehouse != null && request.StockQuantity > 0)
         {
             _context.StockItems.Add(new StockItem
@@ -490,7 +574,7 @@ public class CatalogService : ICatalogService
             });
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Create,
@@ -501,14 +585,19 @@ public class CatalogService : ICatalogService
             after: product,
             cancellationToken: cancellationToken);
 
-        return await GetProductByIdAsync(product.Id, cancellationToken)
-            ?? throw new InvalidOperationException("Failed to retrieve created product");
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return (await GetProductByIdAsync(product.Id, cancellationToken))!;
     }
 
     public async Task<ProductDetailDto> UpdateProductAsync(UpdateProductRequest request, CancellationToken cancellationToken = default)
     {
         var product = await _context.Products
             .Include(p => p.Images)
+            .Include(p => p.Variants)
+            .Include(p => p.ProductCategories)
+            .Include(p => p.BundleComponents)
             .FirstOrDefaultAsync(p => p.Id == request.Id && !p.IsDeleted, cancellationToken)
             ?? throw new ResourceNotFoundException(nameof(Product), request.Id);
 
@@ -525,6 +614,7 @@ public class CatalogService : ICatalogService
         product.Slug = GenerateSlug(request.Name);
         product.Description = request.Description;
         product.ShortDescription = request.ShortDescription;
+        product.ProductType = request.ProductType;
         product.CategoryId = request.CategoryId;
         product.BrandId = request.BrandId;
         product.Price = Money.FromDecimal(request.Price);
@@ -545,6 +635,63 @@ public class CatalogService : ICatalogService
         product.SafetyInformation = request.SafetyInformation;
         product.UpdatedAtUtc = DateTime.UtcNow;
 
+        // Categories Sync
+        product.ProductCategories.Clear();
+        product.ProductCategories.Add(new ProductCategory
+        {
+            ProductId = product.Id,
+            CategoryId = request.CategoryId,
+            IsPrimary = true
+        });
+
+        if (request.AdditionalCategoryIds != null)
+        {
+            foreach (var catId in request.AdditionalCategoryIds.Where(id => id != request.CategoryId).Distinct())
+            {
+                product.ProductCategories.Add(new ProductCategory
+                {
+                    ProductId = product.Id,
+                    CategoryId = catId,
+                    IsPrimary = false
+                });
+            }
+        }
+
+        // Variants Sync
+        if (request.Variants != null)
+        {
+            product.Variants.Clear();
+            foreach (var v in request.Variants)
+            {
+                product.Variants.Add(new ProductVariant
+                {
+                    ProductId = product.Id,
+                    SKU = v.SKU.Trim().ToUpperInvariant(),
+                    Name = v.Name.Trim(),
+                    Price = Money.FromDecimal(v.Price),
+                    CostPrice = Money.FromDecimal(v.CostPrice),
+                    StockQuantity = v.StockQuantity,
+                    IsActive = v.IsActive
+                });
+            }
+        }
+
+        // Bundle BOM Components Sync
+        if (request.BundleComponents != null)
+        {
+            product.ProductType = ProductType.Bundle;
+            product.BundleComponents.Clear();
+            foreach (var b in request.BundleComponents)
+            {
+                product.BundleComponents.Add(new GiftBoxItem
+                {
+                    ParentProductId = product.Id,
+                    ComponentProductId = b.ComponentProductId,
+                    Quantity = b.Quantity
+                });
+            }
+        }
+
         if (request.ImageUrls.Count > 0)
         {
             product.Images.Clear();
@@ -562,7 +709,7 @@ public class CatalogService : ICatalogService
             }
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Update,
@@ -574,8 +721,10 @@ public class CatalogService : ICatalogService
             after: product,
             cancellationToken: cancellationToken);
 
-        return await GetProductByIdAsync(product.Id, cancellationToken)
-            ?? throw new InvalidOperationException("Failed to retrieve updated product");
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return (await GetProductByIdAsync(product.Id, cancellationToken))!;
     }
 
     public async Task<bool> DeleteProductAsync(Guid id, CancellationToken cancellationToken = default)
@@ -586,7 +735,7 @@ public class CatalogService : ICatalogService
         product.IsDeleted = true;
         product.UpdatedAtUtc = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.Delete,
@@ -595,6 +744,9 @@ public class CatalogService : ICatalogService
             product.Id.ToString(),
             product.Name,
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return true;
     }
@@ -638,7 +790,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
-            .Where(p => (p.Category.Name.ToLower().Contains("gift box") || p.Name.ToLower().Contains("gift box")) && p.IsActive && !p.IsDeleted)
+            .Where(p => (p.ProductType == ProductType.Bundle || p.Category.Name.ToLower().Contains("gift box") || p.Name.ToLower().Contains("gift box")) && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
             .ToListAsync(cancellationToken);
@@ -666,8 +818,10 @@ public class CatalogService : ICatalogService
             Name = p.Name,
             Slug = p.Slug,
             ShortDescription = p.ShortDescription,
+            ProductType = p.ProductType,
             CategoryId = p.CategoryId,
             CategoryName = p.Category?.Name ?? "Uncategorized",
+            CategoryIds = p.ProductCategories.Select(pc => pc.CategoryId).ToList(),
             BrandId = p.BrandId,
             BrandName = p.Brand?.Name ?? "AADHI CRACKERS",
             Price = p.Price.ToDecimal(),
@@ -702,8 +856,10 @@ public class CatalogService : ICatalogService
             Name = baseDto.Name,
             Slug = baseDto.Slug,
             ShortDescription = baseDto.ShortDescription,
+            ProductType = baseDto.ProductType,
             CategoryId = baseDto.CategoryId,
             CategoryName = baseDto.CategoryName,
+            CategoryIds = baseDto.CategoryIds,
             BrandId = baseDto.BrandId,
             BrandName = baseDto.BrandName,
             Price = baseDto.Price,
@@ -735,6 +891,27 @@ public class CatalogService : ICatalogService
                 AltText = i.AltText,
                 SortOrder = i.SortOrder,
                 IsPrimary = i.IsPrimary
+            }).ToList(),
+            Variants = p.Variants.Where(v => !v.IsDeleted).Select(v => new ProductVariantDto
+            {
+                Id = v.Id,
+                ProductId = v.ProductId,
+                SKU = v.SKU,
+                Name = v.Name,
+                Price = v.Price.ToDecimal(),
+                CostPrice = v.CostPrice.ToDecimal(),
+                StockQuantity = v.StockQuantity,
+                IsActive = v.IsActive
+            }).ToList(),
+            BundleComponents = p.BundleComponents.Where(b => !b.IsDeleted && b.ComponentProduct != null).Select(b => new GiftBoxComponentDto
+            {
+                Id = b.Id,
+                ComponentProductId = b.ComponentProductId,
+                ComponentProductName = b.ComponentProduct.Name,
+                ComponentSKU = b.ComponentProduct.SKU,
+                Quantity = b.Quantity,
+                UnitPrice = b.ComponentProduct.Price.ToDecimal(),
+                StockQuantityOnHand = b.ComponentProduct.StockQuantity
             }).ToList(),
             RelatedProducts = related
         };

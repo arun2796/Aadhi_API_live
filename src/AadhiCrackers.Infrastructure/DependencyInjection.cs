@@ -104,6 +104,7 @@ public static class DependencyInjection
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISearchService, SearchService>();
         services.AddScoped<IOutboxService, OutboxService>();
+        services.AddScoped<IBusinessNumberGenerator, BusinessNumberGenerator>();
 
         // Background Workers
         services.AddHostedService<OutboxProcessorBackgroundService>();

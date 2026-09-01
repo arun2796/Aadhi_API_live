@@ -19,13 +19,9 @@ public class Promotion : BaseEntity<Guid>
     public int UsedCount { get; set; }
     public int? PerCustomerLimit { get; set; } = 1;
     public bool IsActive { get; set; } = true;
+    public Guid RowVersion { get; set; } = Guid.NewGuid();
 
-    public Promotion()
-    {
-        Id = Guid.NewGuid();
-    }
-
-    public bool IsValidForOrder(Money subtotal, DateTime? checkTimeUtc = null)
+    public bool IsValidForOrder(Money subtotal, int? customerUsageCount = null, DateTime? checkTimeUtc = null)
     {
         var now = checkTimeUtc ?? DateTime.UtcNow;
 
@@ -34,6 +30,7 @@ public class Promotion : BaseEntity<Guid>
         if (EndDateUtc.HasValue && now > EndDateUtc.Value) return false;
         if (UsageLimit.HasValue && UsedCount >= UsageLimit.Value) return false;
         if (MinimumOrderAmount.HasValue && subtotal < MinimumOrderAmount.Value) return false;
+        if (PerCustomerLimit.HasValue && customerUsageCount.HasValue && customerUsageCount.Value >= PerCustomerLimit.Value) return false;
 
         return true;
     }

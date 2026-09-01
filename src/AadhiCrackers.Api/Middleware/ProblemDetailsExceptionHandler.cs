@@ -4,6 +4,7 @@ using AadhiCrackers.Domain.Exceptions;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace AadhiCrackers.Api.Middleware;
 
@@ -49,6 +50,12 @@ public class ProblemDetailsExceptionHandler : IExceptionHandler
                 HttpStatusCode.Conflict,
                 "Insufficient Stock",
                 stockEx.Message,
+                null
+            ),
+            DbUpdateConcurrencyException or ConcurrencyConflictException => (
+                HttpStatusCode.Conflict,
+                "Concurrency Conflict",
+                "The requested resource was modified by another concurrent operation. Please retry with the latest data.",
                 null
             ),
             DomainException domainEx => (

@@ -62,6 +62,45 @@ public class ProductImageDto
     public bool IsPrimary { get; set; }
 }
 
+public class ProductVariantDto
+{
+    public Guid Id { get; set; }
+    public Guid ProductId { get; set; }
+    public string SKU { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public decimal CostPrice { get; set; }
+    public int StockQuantity { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class CreateProductVariantRequest
+{
+    public string SKU { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public decimal CostPrice { get; set; }
+    public int StockQuantity { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class GiftBoxComponentDto
+{
+    public Guid Id { get; set; }
+    public Guid ComponentProductId { get; set; }
+    public string ComponentProductName { get; set; } = string.Empty;
+    public string ComponentSKU { get; set; } = string.Empty;
+    public int Quantity { get; set; } = 1;
+    public decimal UnitPrice { get; set; }
+    public int StockQuantityOnHand { get; set; }
+}
+
+public class CreateGiftBoxComponentRequest
+{
+    public Guid ComponentProductId { get; set; }
+    public int Quantity { get; set; } = 1;
+}
+
 public class ProductDto
 {
     public Guid Id { get; set; }
@@ -69,8 +108,10 @@ public class ProductDto
     public string Name { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;
     public string? ShortDescription { get; set; }
+    public ProductType ProductType { get; set; } = ProductType.Simple;
     public Guid CategoryId { get; set; }
     public string CategoryName { get; set; } = string.Empty;
+    public List<Guid> CategoryIds { get; set; } = new();
     public Guid? BrandId { get; set; }
     public string? BrandName { get; set; }
     public decimal Price { get; set; }
@@ -103,12 +144,15 @@ public class ProductDetailDto : ProductDto
     public int MinOrderQuantity { get; set; }
     public int MaxOrderQuantity { get; set; }
     public List<ProductImageDto> Images { get; set; } = new();
+    public List<ProductVariantDto> Variants { get; set; } = new();
+    public List<GiftBoxComponentDto> BundleComponents { get; set; } = new();
     public List<ProductDto> RelatedProducts { get; set; } = new();
 }
 
 public class ProductFilterRequest
 {
     public string? Search { get; set; }
+    public ProductType? ProductType { get; set; }
     public Guid? CategoryId { get; set; }
     public string? CategorySlug { get; set; }
     public Guid? BrandId { get; set; }
@@ -129,7 +173,9 @@ public class CreateProductRequest
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string? ShortDescription { get; set; }
+    public ProductType ProductType { get; set; } = ProductType.Simple;
     public Guid CategoryId { get; set; }
+    public List<Guid>? AdditionalCategoryIds { get; set; }
     public Guid? BrandId { get; set; }
     public decimal Price { get; set; }
     public decimal? CompareAtPrice { get; set; }
@@ -149,6 +195,8 @@ public class CreateProductRequest
     public bool IsNewArrival { get; set; }
     public string? SafetyInformation { get; set; }
     public List<string> ImageUrls { get; set; } = new();
+    public List<CreateProductVariantRequest>? Variants { get; set; }
+    public List<CreateGiftBoxComponentRequest>? BundleComponents { get; set; }
 }
 
 public class UpdateProductRequest : CreateProductRequest

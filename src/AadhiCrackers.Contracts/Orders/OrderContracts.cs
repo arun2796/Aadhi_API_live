@@ -125,6 +125,7 @@ public class CreateOrderItemRequest
 
 public class CreateOrderRequest
 {
+    public Guid? WarehouseId { get; set; }
     public Address ShippingAddress { get; set; } = new();
     public Address? BillingAddress { get; set; }
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.UPI;
@@ -137,6 +138,14 @@ public class CreateOrderRequest
     public string? PaymentScreenshotUrl { get; set; }
 
     public List<CreateOrderItemRequest> Items { get; set; } = new();
+}
+
+public class SubmitPaymentProofRequest
+{
+    public string UtrNumber { get; set; } = string.Empty;
+    public string? PaymentScreenshotBase64 { get; set; }
+    public string? PaymentScreenshotUrl { get; set; }
+    public string? Notes { get; set; }
 }
 
 public class UpdateOrderStatusRequest
@@ -172,4 +181,63 @@ public class OrderTrackingDto
     public List<OrderStatusHistoryDto> Timeline { get; set; } = new();
     public List<OrderItemDto> Items { get; set; } = new();
     public decimal GrandTotal { get; set; }
+}
+
+public class ReturnOrderItemDto
+{
+    public Guid Id { get; set; }
+    public Guid ProductId { get; set; }
+    public string ProductName { get; set; } = string.Empty;
+    public string SKU { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal LineTotal => UnitPrice * Quantity;
+    public bool IsDamaged { get; set; }
+    public string? ConditionNotes { get; set; }
+}
+
+public class ReturnOrderDto
+{
+    public Guid Id { get; set; }
+    public string ReturnNumber { get; set; } = string.Empty;
+    public Guid OrderId { get; set; }
+    public string OrderNumber { get; set; } = string.Empty;
+    public Guid CustomerId { get; set; }
+    public string CustomerName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public string Status { get; set; } = "Requested";
+    public string? InspectionNotes { get; set; }
+    public bool IsSellable { get; set; }
+    public decimal RefundAmount { get; set; }
+    public DateTime RequestedAtUtc { get; set; }
+    public DateTime? InspectedAtUtc { get; set; }
+    public List<ReturnOrderItemDto> Items { get; set; } = new();
+}
+
+public class CreateReturnOrderItemRequest
+{
+    public Guid ProductId { get; set; }
+    public int Quantity { get; set; }
+    public string? Reason { get; set; }
+}
+
+public class CreateReturnOrderRequest
+{
+    public Guid OrderId { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public List<CreateReturnOrderItemRequest> Items { get; set; } = new();
+}
+
+public class InspectReturnItemRequest
+{
+    public Guid ProductId { get; set; }
+    public int Quantity { get; set; }
+    public bool IsSellable { get; set; }
+    public string? ConditionNotes { get; set; }
+}
+
+public class InspectReturnOrderRequest
+{
+    public string? InspectionNotes { get; set; }
+    public List<InspectReturnItemRequest> ItemInspections { get; set; } = new();
 }

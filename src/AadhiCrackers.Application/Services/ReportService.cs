@@ -28,18 +28,36 @@ public class ReportService : IReportService
 
     public async Task<DashboardKpiDto> GetDashboardKpisAsync(CancellationToken cancellationToken = default)
     {
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+        var thirtyDaysAgo = now.AddDays(-30);
+        var sixtyDaysAgo = now.AddDays(-60);
+
+        // Fetch valid non-cancelled orders
         var orders = await _context.Orders
             .AsNoTracking()
+            .Include(o => o.Items)
             .Where(o => !o.IsDeleted && o.OrderStatus != OrderStatus.Cancelled)
             .ToListAsync(cancellationToken);
 
-        var today = DateTime.UtcNow.Date;
         var todayOrders = orders.Where(o => o.PlacedAtUtc.Date == today).ToList();
+        var currentPeriodOrders = orders.Where(o => o.PlacedAtUtc >= thirtyDaysAgo).ToList();
+        var priorPeriodOrders = orders.Where(o => o.PlacedAtUtc >= sixtyDaysAgo && o.PlacedAtUtc < thirtyDaysAgo).ToList();
 
         var totalSales = orders.Sum(o => o.GrandTotal.ToDecimal());
         var todaySales = todayOrders.Sum(o => o.GrandTotal.ToDecimal());
+        var currentSales = currentPeriodOrders.Sum(o => o.GrandTotal.ToDecimal());
+        var priorSales = priorPeriodOrders.Sum(o => o.GrandTotal.ToDecimal());
 
-        var totalCustomers = await _context.Customers.CountAsync(c => !c.IsDeleted, cancellationToken);
+        var salesPctChange = priorSales > 0 ? ((currentSales - priorSales) / priorSales) * 100 : (currentSales > 0 ? 100 : 0);
+        var ordersPctChange = priorPeriodOrders.Count > 0 ? ((decimal)(currentPeriodOrders.Count - priorPeriodOrders.Count) / priorPeriodOrders.Count) * 100 : (currentPeriodOrders.Count > 0 ? 100 : 0);
+
+        var customers = await _context.Customers.AsNoTracking().Where(c => !c.IsDeleted).ToListAsync(cancellationToken);
+        var totalCustomers = customers.Count;
+        var currentCustCount = customers.Count(c => c.CreatedAtUtc >= thirtyDaysAgo);
+        var priorCustCount = customers.Count(c => c.CreatedAtUtc >= sixtyDaysAgo && c.CreatedAtUtc < thirtyDaysAgo);
+        var custPctChange = priorCustCount > 0 ? ((decimal)(currentCustCount - priorCustCount) / priorCustCount) * 100 : (currentCustCount > 0 ? 100 : 0);
+
         var pendingOrders = orders.Count(o => o.OrderStatus == OrderStatus.Pending);
 
         var products = await _context.Products.AsNoTracking().Where(p => !p.IsDeleted).ToListAsync(cancellationToken);
@@ -49,28 +67,55 @@ public class ReportService : IReportService
         var invoices = await _context.Invoices.AsNoTracking().Where(i => !i.IsDeleted && i.Status != InvoiceStatus.Paid && i.Status != InvoiceStatus.Cancelled).ToListAsync(cancellationToken);
         var outstandingAmount = invoices.Sum(i => i.BalanceAmount.ToDecimal());
 
-        // Approximate profit
-        var totalProfit = totalSales * 0.26m; // ~26% net profit margin on fireworks
+        var expenses = await _context.Expenses.AsNoTracking().Where(e => !e.IsDeleted).ToListAsync(cancellationToken);
+        var totalExpenses = expenses.Sum(e => e.Amount.ToDecimal());
+
+        // Real COGS calculation from order items snapshots
+        var totalCogs = orders.SelectMany(o => o.Items).Sum(i => i.Quantity * i.CostPriceSnapshot.ToDecimal());
+        var totalProfit = totalSales - totalCogs - totalExpenses;
+
+        var currentExpenses = expenses.Where(e => e.ExpenseDateUtc >= thirtyDaysAgo).Sum(e => e.Amount.ToDecimal());
+        var currentCogs = currentPeriodOrders.SelectMany(o => o.Items).Sum(i => i.Quantity * i.CostPriceSnapshot.ToDecimal());
+        var currentProfit = currentSales - currentCogs - currentExpenses;
+
+        var priorExpenses = expenses.Where(e => e.ExpenseDateUtc >= sixtyDaysAgo && e.ExpenseDateUtc < thirtyDaysAgo).Sum(e => e.Amount.ToDecimal());
+        var priorCogs = priorPeriodOrders.SelectMany(o => o.Items).Sum(i => i.Quantity * i.CostPriceSnapshot.ToDecimal());
+        var priorProfit = priorSales - priorCogs - priorExpenses;
+        var profitPctChange = priorProfit != 0 ? ((currentProfit - priorProfit) / Math.Abs(priorProfit)) * 100 : (currentProfit > 0 ? 100 : 0);
+
+        // Compute Brand share dynamically
+        var brandGroups = await _context.Products
+            .AsNoTracking()
+            .Where(p => !p.IsDeleted && p.Brand != null)
+            .GroupBy(p => p.Brand!.Name)
+            .Select(g => new { BrandName = g.Key, Count = g.Count() })
+            .OrderByDescending(g => g.Count)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var topBrandName = brandGroups?.BrandName ?? "AADHI CRACKERS";
+        var topBrandShare = products.Count > 0 && brandGroups != null
+            ? (int)Math.Round(((double)brandGroups.Count / products.Count) * 100)
+            : 100;
 
         return new DashboardKpiDto
         {
-            TotalSales = totalSales > 0 ? totalSales : 2485650m,
-            SalesChangePercentage = "+18.5%",
-            TotalOrders = orders.Count > 0 ? orders.Count : 1248,
-            OrdersChangePercentage = "+12.4%",
-            TotalCustomers = totalCustomers > 0 ? totalCustomers : 856,
-            CustomersChangePercentage = "+8.7%",
-            TotalProfit = totalProfit > 0 ? totalProfit : 645230m,
-            ProfitChangePercentage = "+22.1%",
-            LowStockItems = lowStockCount > 0 ? lowStockCount : 23,
-            PendingOrders = pendingOrders > 0 ? pendingOrders : 17,
-            StockValue = totalStockValue > 0 ? totalStockValue : 12540000m,
-            OutstandingAmount = outstandingAmount > 0 ? outstandingAmount : 875230m,
-            OutstandingInvoicesCount = invoices.Count > 0 ? invoices.Count : 23,
-            TodaySales = todaySales > 0 ? todaySales : 98450m,
-            TodayOrders = todayOrders.Count > 0 ? todayOrders.Count : 42,
-            BestSellingBrand = "AADHI CRACKERS",
-            BestSellingBrandShare = 65
+            TotalSales = totalSales,
+            SalesChangePercentage = $"{(salesPctChange >= 0 ? "+" : "")}{salesPctChange:F1}%",
+            TotalOrders = orders.Count,
+            OrdersChangePercentage = $"{(ordersPctChange >= 0 ? "+" : "")}{ordersPctChange:F1}%",
+            TotalCustomers = totalCustomers,
+            CustomersChangePercentage = $"{(custPctChange >= 0 ? "+" : "")}{custPctChange:F1}%",
+            TotalProfit = totalProfit,
+            ProfitChangePercentage = $"{(profitPctChange >= 0 ? "+" : "")}{profitPctChange:F1}%",
+            LowStockItems = lowStockCount,
+            PendingOrders = pendingOrders,
+            StockValue = totalStockValue,
+            OutstandingAmount = outstandingAmount,
+            OutstandingInvoicesCount = invoices.Count,
+            TodaySales = todaySales,
+            TodayOrders = todayOrders.Count,
+            BestSellingBrand = topBrandName,
+            BestSellingBrandShare = topBrandShare
         };
     }
 
@@ -94,106 +139,144 @@ public class ReportService : IReportService
 
         var trend = new List<SalesTrendPointDto>();
 
-        if (orders.Count == 0)
+        var grouped = orders.GroupBy(o => o.PlacedAtUtc.ToString("dd MMM", CultureInfo.InvariantCulture));
+        foreach (var g in grouped)
         {
-            // Seed visual baseline curve matching mockup for first launch
-            var dates = new[] { "01 May", "06 May", "11 May", "16 May", "21 May", "26 May", "31 May" };
-            var sales = new[] { 180000m, 320000m, 290000m, 340000m, 260000m, 450000m, 480000m };
-            var ordCounts = new[] { 90, 160, 145, 170, 130, 225, 240 };
-            for (int i = 0; i < dates.Length; i++)
+            trend.Add(new SalesTrendPointDto
             {
-                trend.Add(new SalesTrendPointDto
-                {
-                    Date = dates[i],
-                    Sales = sales[i],
-                    Orders = ordCounts[i]
-                });
-            }
+                Date = g.Key,
+                Sales = g.Sum(o => o.GrandTotal.ToDecimal()),
+                Orders = g.Count()
+            });
         }
-        else
-        {
-            var grouped = orders.GroupBy(o => o.PlacedAtUtc.ToString("dd MMM", CultureInfo.InvariantCulture));
-            foreach (var g in grouped)
-            {
-                trend.Add(new SalesTrendPointDto
-                {
-                    Date = g.Key,
-                    Sales = g.Sum(o => o.GrandTotal.ToDecimal()),
-                    Orders = g.Count()
-                });
-            }
-        }
+
+        var totalSales = orders.Sum(o => o.GrandTotal.ToDecimal());
+        var totalDiscount = orders.Sum(o => o.Discount.ToDecimal());
+        var totalTax = orders.Sum(o => o.Tax.ToDecimal());
 
         return new SalesReportDto
         {
-            TotalSales = trend.Sum(t => t.Sales),
-            TotalOrders = trend.Sum(t => t.Orders),
-            TotalDiscount = 24800m,
-            TotalTax = trend.Sum(t => t.Sales) * 0.18m,
+            TotalSales = totalSales,
+            TotalOrders = orders.Count,
+            TotalDiscount = totalDiscount,
+            TotalTax = totalTax,
             SalesTrend = trend
         };
     }
 
     public async Task<List<CategorySalesDto>> GetTopSellingCategoriesAsync(CancellationToken cancellationToken = default)
     {
-        var list = new List<CategorySalesDto>
+        var items = await _context.OrderItems
+            .AsNoTracking()
+            .Include(i => i.Product)
+            .ThenInclude(p => p!.Category)
+            .Where(i => !i.IsDeleted && i.Order.OrderStatus != OrderStatus.Cancelled && !i.Order.IsDeleted)
+            .ToListAsync(cancellationToken);
+
+        if (items.Count == 0)
         {
-            new() { CategoryName = "Sparklers", Revenue = 870000m, Percentage = 35 },
-            new() { CategoryName = "Ground Chakkar", Revenue = 487000m, Percentage = 20 },
-            new() { CategoryName = "Aerial Shots", Revenue = 447000m, Percentage = 18 },
-            new() { CategoryName = "Rockets", Revenue = 373000m, Percentage = 15 },
-            new() { CategoryName = "Others", Revenue = 288650m, Percentage = 12 }
-        };
-        return await Task.FromResult(list);
+            return new List<CategorySalesDto>();
+        }
+
+        var grouped = items
+            .GroupBy(i => i.Product?.Category?.Name ?? "Uncategorized")
+            .Select(g => new
+            {
+                CategoryName = g.Key,
+                Revenue = g.Sum(x => x.LineTotal.ToDecimal())
+            })
+            .OrderByDescending(x => x.Revenue)
+            .ToList();
+
+        var grandTotal = grouped.Sum(x => x.Revenue);
+        if (grandTotal == 0) grandTotal = 1;
+
+        return grouped.Select(g => new CategorySalesDto
+        {
+            CategoryName = g.CategoryName,
+            Revenue = g.Revenue,
+            Percentage = (int)Math.Round((g.Revenue / grandTotal) * 100)
+        }).ToList();
     }
 
     public async Task<List<TopProductDto>> GetTopSellingProductsAsync(int limit = 5, CancellationToken cancellationToken = default)
     {
-        var products = await _context.Products
+        var items = await _context.OrderItems
             .AsNoTracking()
-            .Include(p => p.Images)
-            .Where(p => !p.IsDeleted)
-            .Take(limit)
+            .Include(i => i.Product)
+            .ThenInclude(p => p!.Images)
+            .Where(i => !i.IsDeleted && i.Order.OrderStatus != OrderStatus.Cancelled && !i.Order.IsDeleted)
             .ToListAsync(cancellationToken);
 
-        if (products.Count == 0)
+        if (items.Count == 0)
         {
-            return new List<TopProductDto>
-            {
-                new() { ProductName = "Aadhi Deluxe Gift Box", UnitsSold = 324, Revenue = 971676m },
-                new() { ProductName = "Mega Celebration Box", UnitsSold = 210, Revenue = 944790m },
-                new() { ProductName = "Sparklers (10 Pcs)", UnitsSold = 560, Revenue = 280000m },
-                new() { ProductName = "Flower Pots (Big)", UnitsSold = 430, Revenue = 258000m },
-                new() { ProductName = "Ground Chakkar Deluxe", UnitsSold = 410, Revenue = 246000m }
-            };
+            return new List<TopProductDto>();
         }
 
-        return products.Select((p, idx) =>
-        {
-            var units = 350 - (idx * 50);
-            var primaryImg = p.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary)?.Url
-                ?? p.Images.OrderBy(i => i.SortOrder).FirstOrDefault()?.Url;
-
-            return new TopProductDto
+        var top = items
+            .GroupBy(i => i.ProductId)
+            .Select(g =>
             {
-                ProductId = p.Id,
-                ProductName = p.Name,
-                ImageUrl = primaryImg,
-                UnitsSold = units,
-                Revenue = units * p.Price.ToDecimal()
-            };
-        }).ToList();
+                var sample = g.First();
+                var prod = sample.Product;
+                var primaryImg = prod?.Images.OrderBy(img => img.SortOrder).FirstOrDefault(img => img.IsPrimary)?.Url
+                    ?? prod?.Images.OrderBy(img => img.SortOrder).FirstOrDefault()?.Url
+                    ?? sample.ProductImageUrlSnapshot;
+
+                return new TopProductDto
+                {
+                    ProductId = g.Key,
+                    ProductName = sample.ProductNameSnapshot,
+                    ImageUrl = primaryImg,
+                    UnitsSold = g.Sum(x => x.Quantity),
+                    Revenue = g.Sum(x => x.LineTotal.ToDecimal())
+                };
+            })
+            .OrderByDescending(x => x.Revenue)
+            .Take(limit)
+            .ToList();
+
+        return top;
     }
 
     public async Task<List<PaymentMethodReportDto>> GetSalesByPaymentMethodAsync(CancellationToken cancellationToken = default)
     {
-        return await Task.FromResult(new List<PaymentMethodReportDto>
+        var orders = await _context.Orders
+            .AsNoTracking()
+            .Where(o => !o.IsDeleted && o.OrderStatus != OrderStatus.Cancelled)
+            .ToListAsync(cancellationToken);
+
+        if (orders.Count == 0)
         {
-            new() { Method = "UPI", TotalAmount = 1118542m, Percentage = 45 },
-            new() { Method = "Credit/Debit Card", TotalAmount = 621412m, Percentage = 25 },
-            new() { Method = "Cash on Delivery", TotalAmount = 496780m, Percentage = 20 },
-            new() { Method = "Net Banking", TotalAmount = 248916m, Percentage = 10 }
-        });
+            return new List<PaymentMethodReportDto>();
+        }
+
+        var grouped = orders
+            .GroupBy(o => o.PaymentMethod)
+            .Select(g => new
+            {
+                Method = g.Key.ToString(),
+                TotalAmount = g.Sum(o => o.GrandTotal.ToDecimal())
+            })
+            .OrderByDescending(g => g.TotalAmount)
+            .ToList();
+
+        var total = grouped.Sum(x => x.TotalAmount);
+        if (total == 0) total = 1;
+
+        return grouped.Select(g => new PaymentMethodReportDto
+        {
+            Method = g.Method switch
+            {
+                "UPI" => "UPI",
+                "Card" => "Credit/Debit Card",
+                "COD" => "Cash on Delivery",
+                "BankTransfer" => "Net Banking",
+                _ => g.Method
+            },
+            TotalAmount = g.TotalAmount,
+            Percentage = (int)Math.Round((g.TotalAmount / total) * 100)
+        }).ToList();
     }
 
     public async Task<byte[]> GenerateCsvExportAsync(string reportType, DateTime? fromDateUtc = null, DateTime? toDateUtc = null, CancellationToken cancellationToken = default)

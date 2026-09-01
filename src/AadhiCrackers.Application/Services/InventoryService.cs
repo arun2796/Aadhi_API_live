@@ -164,8 +164,7 @@ public class InventoryService : IInventoryService
             CreatedAtUtc = DateTime.UtcNow
         };
         _context.StockMovements.Add(movement);
-
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         // Enterprise Audit Logging
         await _auditLog.LogAsync(
@@ -177,6 +176,9 @@ public class InventoryService : IInventoryService
             before: new { QuantityOnHand = beforeQuantity },
             after: new { QuantityOnHand = newQuantity, Delta = delta, request.Reason },
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return new StockItemDto
         {
@@ -259,7 +261,7 @@ public class InventoryService : IInventoryService
             CreatedAtUtc = DateTime.UtcNow
         });
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
             AuditAction.StockTransferred,
@@ -269,6 +271,9 @@ public class InventoryService : IInventoryService
             product.Name,
             after: new { request.FromWarehouseId, request.ToWarehouseId, request.Quantity, request.Reason },
             cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return true;
     }

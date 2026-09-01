@@ -23,11 +23,6 @@ public class Invoice : AggregateRoot<Guid>
     public InvoiceStatus Status { get; set; } = InvoiceStatus.Issued;
     public DateTime IssuedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime DueDateUtc { get; set; } = DateTime.UtcNow.AddDays(7);
-
-    public Invoice()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class Payment : AggregateRoot<Guid>
@@ -46,11 +41,6 @@ public class Payment : AggregateRoot<Guid>
     public string? IdempotencyKey { get; set; }
     public string? Notes { get; set; }
     public DateTime PaidAtUtc { get; set; } = DateTime.UtcNow;
-
-    public Payment()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class Expense : AggregateRoot<Guid>
@@ -63,11 +53,6 @@ public class Expense : AggregateRoot<Guid>
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Cash;
     public DateTime ExpenseDateUtc { get; set; } = DateTime.UtcNow;
     public string? Reference { get; set; }
-
-    public Expense()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class Refund : AggregateRoot<Guid>
@@ -84,11 +69,6 @@ public class Refund : AggregateRoot<Guid>
     public string? Reference { get; set; }
     public string? IdempotencyKey { get; set; }
     public DateTime ProcessedAtUtc { get; set; } = DateTime.UtcNow;
-
-    public Refund()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class SupplierBill : AggregateRoot<Guid>
@@ -109,11 +89,6 @@ public class SupplierBill : AggregateRoot<Guid>
     public Money BalanceAmount { get; set; } = Money.Zero();
     public DateTime DueDateUtc { get; set; } = DateTime.UtcNow.AddDays(30);
     public string Status { get; set; } = "Issued"; // Draft, Issued, PartiallyPaid, Paid, Overdue, Cancelled
-
-    public SupplierBill()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class ReturnOrder : AggregateRoot<Guid>
@@ -132,11 +107,6 @@ public class ReturnOrder : AggregateRoot<Guid>
     public DateTime? InspectedAtUtc { get; set; }
 
     public ICollection<ReturnOrderItem> Items { get; set; } = new List<ReturnOrderItem>();
-
-    public ReturnOrder()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class ReturnOrderItem : BaseEntity<Guid>
@@ -149,9 +119,4 @@ public class ReturnOrderItem : BaseEntity<Guid>
     public Money UnitPrice { get; set; } = Money.Zero();
     public bool IsDamaged { get; set; }
     public string? ConditionNotes { get; set; }
-
-    public ReturnOrderItem()
-    {
-        Id = Guid.NewGuid();
-    }
 }

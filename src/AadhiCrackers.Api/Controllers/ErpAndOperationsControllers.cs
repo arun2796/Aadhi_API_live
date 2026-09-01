@@ -38,6 +38,13 @@ public class OrdersController : ControllerBase
         [FromQuery] string? search = null,
         CancellationToken cancellationToken = default)
     {
+        // Enforce customer ownership check to prevent IDOR
+        if (_currentUser.Role == "Customer" && Guid.TryParse(_currentUser.UserId, out var customerGuid))
+        {
+            var customerOrders = await _orderService.GetOrdersByCustomerIdAsync(customerGuid, page, pageSize, cancellationToken);
+            return Ok(ApiResponse<PagedResult<OrderDto>>.Ok(customerOrders, correlationId: _currentUser.CorrelationId));
+        }
+
         var result = await _orderService.GetOrdersAsync(page, pageSize, status, search, cancellationToken);
         return Ok(ApiResponse<PagedResult<OrderDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
     }
@@ -49,6 +56,13 @@ public class OrdersController : ControllerBase
         var order = await _orderService.GetOrderByIdAsync(id, cancellationToken);
         if (order == null)
             return NotFound(ApiResponse<OrderDto>.Fail($"Order with ID '{id}' not found", _currentUser.CorrelationId));
+
+        // Prevent IDOR: Customers can only view their own order
+        if (_currentUser.Role == "Customer" && Guid.TryParse(_currentUser.UserId, out var customerGuid))
+        {
+            if (order.CustomerId != customerGuid)
+                return Forbid();
+        }
 
         return Ok(ApiResponse<OrderDto>.Ok(order, correlationId: _currentUser.CorrelationId));
     }
@@ -239,9 +253,10 @@ public class PurchasesController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResult<PurchaseOrderDto>>>> GetPurchaseOrders(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
+        [FromQuery] PurchaseOrderStatus? status = null,
         CancellationToken cancellationToken = default)
     {
-        var result = await _purchaseService.GetPurchaseOrdersAsync(page, pageSize, cancellationToken);
+        var result = await _purchaseService.GetPurchaseOrdersAsync(page, pageSize, status, cancellationToken);
         return Ok(ApiResponse<PagedResult<PurchaseOrderDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
     }
 
@@ -263,6 +278,42 @@ public class PurchasesController : ControllerBase
     {
         var po = await _purchaseService.CreatePurchaseOrderAsync(request, cancellationToken);
         return CreatedAtAction(nameof(GetPurchaseOrderById), new { id = po.Id }, ApiResponse<PurchaseOrderDto>.Ok(po, "Purchase order created", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/submit")]
+    [Authorize(Policy = "RequirePurchaseManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> SubmitPurchaseOrder(Guid id, CancellationToken cancellationToken)
+    {
+        var po = await _purchaseService.SubmitPurchaseOrderAsync(id, cancellationToken);
+        return Ok(ApiResponse<PurchaseOrderDto>.Ok(po, "Purchase order submitted for approval", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/approve")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> ApprovePurchaseOrder(Guid id, [FromBody] ApprovePurchaseOrderRequest request, CancellationToken cancellationToken)
+    {
+        var po = await _purchaseService.ApprovePurchaseOrderAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<PurchaseOrderDto>.Ok(po, "Purchase order approved", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/reject")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> RejectPurchaseOrder(Guid id, [FromBody] RejectPurchaseOrderRequest request, CancellationToken cancellationToken)
+    {
+        var po = await _purchaseService.RejectPurchaseOrderAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<PurchaseOrderDto>.Ok(po, "Purchase order rejected", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/cancel")]
+    [Authorize(Policy = "RequirePurchaseManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PurchaseOrderDto>>> CancelPurchaseOrder(Guid id, [FromBody] CancelPurchaseOrderRequest request, CancellationToken cancellationToken)
+    {
+        var po = await _purchaseService.CancelPurchaseOrderAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<PurchaseOrderDto>.Ok(po, "Purchase order cancelled", _currentUser.CorrelationId));
     }
 
     [HttpPost("goods-receipts")]
@@ -327,6 +378,17 @@ public class PaymentsController : ControllerBase
         return Ok(ApiResponse<PagedResult<PaymentDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<PaymentDto>>> GetPaymentById(Guid id, CancellationToken cancellationToken)
+    {
+        var payment = await _financeService.GetPaymentByIdAsync(id, cancellationToken);
+        if (payment == null)
+            return NotFound(ApiResponse<PaymentDto>.Fail($"Payment with ID '{id}' not found", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<PaymentDto>.Ok(payment, correlationId: _currentUser.CorrelationId));
+    }
+
     [HttpPost]
     [Authorize(Policy = "RequireAccountant")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
@@ -334,6 +396,184 @@ public class PaymentsController : ControllerBase
     {
         var payment = await _financeService.CreatePaymentAsync(request, cancellationToken);
         return Ok(ApiResponse<PaymentDto>.Ok(payment, "Payment recorded successfully", _currentUser.CorrelationId));
+    }
+}
+
+[ApiController]
+[Route("api/v1/[controller]")]
+public class ReturnsController : ControllerBase
+{
+    private readonly IOrderService _orderService;
+    private readonly ICurrentUserService _currentUser;
+
+    public ReturnsController(IOrderService orderService, ICurrentUserService currentUser)
+    {
+        _orderService = orderService;
+        _currentUser = currentUser;
+    }
+
+    [HttpGet]
+    [Authorize(Policy = "RequireStaff")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PagedResult<ReturnOrderDto>>>> GetReturns(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _orderService.GetReturnOrdersAsync(page, pageSize, status, cancellationToken);
+        return Ok(ApiResponse<PagedResult<ReturnOrderDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpGet("{id:guid}")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<ReturnOrderDto>>> GetReturnById(Guid id, CancellationToken cancellationToken)
+    {
+        var returnOrder = await _orderService.GetReturnOrderByIdAsync(id, cancellationToken);
+        if (returnOrder == null)
+            return NotFound(ApiResponse<ReturnOrderDto>.Fail($"Return order with ID '{id}' not found", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<ReturnOrderDto>.Ok(returnOrder, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpPost]
+    [Authorize]
+    [EnableRateLimiting(RateLimitingPolicies.OrderCreate)]
+    public async Task<ActionResult<ApiResponse<ReturnOrderDto>>> CreateReturnOrder([FromBody] CreateReturnOrderRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _orderService.CreateReturnOrderAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetReturnById), new { id = result.Id }, ApiResponse<ReturnOrderDto>.Ok(result, "Return requested successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/approve")]
+    [Authorize(Policy = "RequireStaff")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<ReturnOrderDto>>> ApproveReturn(Guid id, [FromBody] string? notes, CancellationToken cancellationToken)
+    {
+        var result = await _orderService.ApproveReturnOrderAsync(id, notes, cancellationToken);
+        return Ok(ApiResponse<ReturnOrderDto>.Ok(result, "Return request approved", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/receive")]
+    [Authorize(Policy = "RequireInventoryManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<ReturnOrderDto>>> ReceiveReturn(Guid id, [FromBody] string? notes, CancellationToken cancellationToken)
+    {
+        var result = await _orderService.ReceiveReturnOrderAsync(id, notes, cancellationToken);
+        return Ok(ApiResponse<ReturnOrderDto>.Ok(result, "Return package marked as received", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/inspect")]
+    [Authorize(Policy = "RequireInventoryManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<ReturnOrderDto>>> InspectReturn(Guid id, [FromBody] InspectReturnOrderRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _orderService.InspectReturnOrderAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<ReturnOrderDto>.Ok(result, "Return inspection completed and sellable items restocked", _currentUser.CorrelationId));
+    }
+}
+
+[ApiController]
+[Route("api/v1/[controller]")]
+public class RefundsController : ControllerBase
+{
+    private readonly IFinanceService _financeService;
+    private readonly ICurrentUserService _currentUser;
+
+    public RefundsController(IFinanceService financeService, ICurrentUserService currentUser)
+    {
+        _financeService = financeService;
+        _currentUser = currentUser;
+    }
+
+    [HttpGet]
+    [Authorize(Policy = "RequireAccountant")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PagedResult<RefundDto>>>> GetRefunds(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] Guid? orderId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _financeService.GetRefundsAsync(page, pageSize, orderId, cancellationToken);
+        return Ok(ApiResponse<PagedResult<RefundDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<RefundDto>>> GetRefundById(Guid id, CancellationToken cancellationToken)
+    {
+        var refund = await _financeService.GetRefundByIdAsync(id, cancellationToken);
+        if (refund == null)
+            return NotFound(ApiResponse<RefundDto>.Fail($"Refund with ID '{id}' not found", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<RefundDto>.Ok(refund, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpPost]
+    [Authorize(Policy = "RequireAccountant")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<RefundDto>>> CreateRefund([FromBody] CreateRefundRequest request, CancellationToken cancellationToken)
+    {
+        var refund = await _financeService.CreateRefundAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetRefundById), new { id = refund.Id }, ApiResponse<RefundDto>.Ok(refund, "Refund processed successfully", _currentUser.CorrelationId));
+    }
+}
+
+[ApiController]
+[Route("api/v1/supplier-bills")]
+public class SupplierBillsController : ControllerBase
+{
+    private readonly IFinanceService _financeService;
+    private readonly ICurrentUserService _currentUser;
+
+    public SupplierBillsController(IFinanceService financeService, ICurrentUserService currentUser)
+    {
+        _financeService = financeService;
+        _currentUser = currentUser;
+    }
+
+    [HttpGet]
+    [Authorize(Policy = "RequireAccountant")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<PagedResult<SupplierBillDto>>>> GetSupplierBills(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] Guid? supplierId = null,
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _financeService.GetSupplierBillsAsync(page, pageSize, supplierId, status, cancellationToken);
+        return Ok(ApiResponse<PagedResult<SupplierBillDto>>.Ok(result, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequireAccountant")]
+    public async Task<ActionResult<ApiResponse<SupplierBillDto>>> GetSupplierBillById(Guid id, CancellationToken cancellationToken)
+    {
+        var bill = await _financeService.GetSupplierBillByIdAsync(id, cancellationToken);
+        if (bill == null)
+            return NotFound(ApiResponse<SupplierBillDto>.Fail($"Supplier bill with ID '{id}' not found", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<SupplierBillDto>.Ok(bill, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpPost]
+    [Authorize(Policy = "RequireAccountant")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<SupplierBillDto>>> CreateSupplierBill([FromBody] CreateSupplierBillRequest request, CancellationToken cancellationToken)
+    {
+        var bill = await _financeService.CreateSupplierBillAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetSupplierBillById), new { id = bill.Id }, ApiResponse<SupplierBillDto>.Ok(bill, "Supplier bill created successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/pay")]
+    [Authorize(Policy = "RequireAccountant")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<SupplierBillDto>>> PaySupplierBill(Guid id, [FromBody] PaySupplierBillRequest request, CancellationToken cancellationToken)
+    {
+        var bill = await _financeService.PaySupplierBillAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<SupplierBillDto>.Ok(bill, "Supplier bill payment recorded", _currentUser.CorrelationId));
     }
 }
 

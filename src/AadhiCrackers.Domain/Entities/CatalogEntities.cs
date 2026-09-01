@@ -19,11 +19,7 @@ public class Category : BaseEntity<Guid>
     public string? SeoDescription { get; set; }
 
     public ICollection<Product> Products { get; set; } = new List<Product>();
-
-    public Category()
-    {
-        Id = Guid.NewGuid();
-    }
+    public ICollection<ProductCategory> ProductCategories { get; set; } = new List<ProductCategory>();
 }
 
 public class Brand : BaseEntity<Guid>
@@ -35,11 +31,6 @@ public class Brand : BaseEntity<Guid>
     public bool IsActive { get; set; } = true;
 
     public ICollection<Product> Products { get; set; } = new List<Product>();
-
-    public Brand()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class ProductImage : BaseEntity<Guid>
@@ -50,11 +41,6 @@ public class ProductImage : BaseEntity<Guid>
     public string? AltText { get; set; }
     public int SortOrder { get; set; }
     public bool IsPrimary { get; set; }
-
-    public ProductImage()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class Product : AggregateRoot<Guid>
@@ -64,6 +50,7 @@ public class Product : AggregateRoot<Guid>
     public string Slug { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string? ShortDescription { get; set; }
+    public ProductType ProductType { get; set; } = ProductType.Simple;
     public Guid CategoryId { get; set; }
     public Category Category { get; set; } = null!;
     public Guid? BrandId { get; set; }
@@ -86,19 +73,15 @@ public class Product : AggregateRoot<Guid>
     public bool IsBestSeller { get; set; }
     public bool IsNewArrival { get; set; }
     public string? SafetyInformation { get; set; }
-    public byte[]? RowVersion { get; set; }
+    public Guid RowVersion { get; set; } = Guid.NewGuid();
 
     public ICollection<ProductImage> Images { get; set; } = new List<ProductImage>();
     public ICollection<ProductCategory> ProductCategories { get; set; } = new List<ProductCategory>();
     public ICollection<ProductVariant> Variants { get; set; } = new List<ProductVariant>();
+    public ICollection<GiftBoxItem> BundleComponents { get; set; } = new List<GiftBoxItem>();
     public ICollection<ProductReview> Reviews { get; set; } = new List<ProductReview>();
 
     public int AvailableQuantity => Math.Max(0, StockQuantity - ReservedQuantity);
-
-    public Product()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class ProductCategory : BaseEntity<Guid>
@@ -108,11 +91,6 @@ public class ProductCategory : BaseEntity<Guid>
     public Guid CategoryId { get; set; }
     public Category Category { get; set; } = null!;
     public bool IsPrimary { get; set; }
-
-    public ProductCategory()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class ProductVariant : BaseEntity<Guid>
@@ -125,11 +103,6 @@ public class ProductVariant : BaseEntity<Guid>
     public Money CostPrice { get; set; } = Money.Zero();
     public int StockQuantity { get; set; }
     public bool IsActive { get; set; } = true;
-
-    public ProductVariant()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class GiftBoxItem : BaseEntity<Guid>
@@ -139,11 +112,6 @@ public class GiftBoxItem : BaseEntity<Guid>
     public Guid ComponentProductId { get; set; }
     public Product ComponentProduct { get; set; } = null!;
     public int Quantity { get; set; } = 1;
-
-    public GiftBoxItem()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class ProductReview : BaseEntity<Guid>
@@ -155,11 +123,4 @@ public class ProductReview : BaseEntity<Guid>
     public int Rating { get; set; } = 5;
     public string Comment { get; set; } = string.Empty;
     public string Status { get; set; } = "Approved"; // Pending, Approved, Rejected, Hidden
-    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
-
-    public ProductReview()
-    {
-        Id = Guid.NewGuid();
-    }
 }
-

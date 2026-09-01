@@ -30,11 +30,6 @@ public class AuditLog : BaseEntity<Guid>
     public string? AfterJson { get; set; }
     public string? ChangedFieldsJson { get; set; }
     public string? MetadataJson { get; set; }
-
-    public AuditLog()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class OutboxMessage : BaseEntity<Guid>
@@ -45,11 +40,8 @@ public class OutboxMessage : BaseEntity<Guid>
     public DateTime? ProcessedOnUtc { get; set; }
     public string? Error { get; set; }
     public int RetryCount { get; set; }
-
-    public OutboxMessage()
-    {
-        Id = Guid.NewGuid();
-    }
+    public string Status { get; set; } = "Pending"; // Pending, Processing, Processed, Failed, DeadLetter
+    public DateTime? NextAttemptAtUtc { get; set; }
 }
 
 public class SystemSetting : BaseEntity<Guid>
@@ -59,11 +51,6 @@ public class SystemSetting : BaseEntity<Guid>
     public string Group { get; set; } = "General"; // General, Store, Tax, Shipping, Notification, Security, Elastic
     public string? Description { get; set; }
     public bool IsEncrypted { get; set; }
-
-    public SystemSetting()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class LoginHistory : BaseEntity<Guid>
@@ -75,11 +62,6 @@ public class LoginHistory : BaseEntity<Guid>
     public string? UserAgent { get; set; }
     public bool Success { get; set; } = true;
     public string? FailureReason { get; set; }
-
-    public LoginHistory()
-    {
-        Id = Guid.NewGuid();
-    }
 }
 
 public class RateLimitLog : BaseEntity<Guid>
@@ -91,10 +73,4 @@ public class RateLimitLog : BaseEntity<Guid>
     public int RequestsCount { get; set; }
     public int BlockedCount { get; set; }
     public string Reason { get; set; } = string.Empty;
-
-    public RateLimitLog()
-    {
-        Id = Guid.NewGuid();
-    }
 }
-

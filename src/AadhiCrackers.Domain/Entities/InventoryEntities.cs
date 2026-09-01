@@ -30,6 +30,7 @@ public class StockItem : BaseEntity<Guid>
     public int QuantityOnHand { get; set; }
     public int QuantityReserved { get; set; }
     public int ReorderLevel { get; set; } = 20;
+    public Guid RowVersion { get; set; } = Guid.NewGuid();
 
     public int QuantityAvailable => Math.Max(0, QuantityOnHand - QuantityReserved);
 

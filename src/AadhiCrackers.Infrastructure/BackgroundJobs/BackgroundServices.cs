@@ -33,8 +33,11 @@ public class OutboxProcessorBackgroundService : BackgroundService
                 var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
                 var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
+                var now = DateTime.UtcNow;
                 var pendingMessages = await context.OutboxMessages
-                    .Where(m => m.ProcessedOnUtc == null && m.RetryCount < 5)
+                    .Where(m => (m.Status == "Pending" || m.Status == "Failed") &&
+                                (m.NextAttemptAtUtc == null || m.NextAttemptAtUtc <= now) &&
+                                m.RetryCount < 5)
                     .OrderBy(m => m.OccurredOnUtc)
                     .Take(20)
                     .ToListAsync(stoppingToken);
@@ -47,6 +50,7 @@ public class OutboxProcessorBackgroundService : BackgroundService
                     {
                         try
                         {
+                            msg.Status = "Processing";
                             _logger.LogInformation("Dispatching Outbox Event [{Id}] Type={Type}", msg.Id, msg.Type);
 
                             // Execute typed business handlers
@@ -96,6 +100,7 @@ public class OutboxProcessorBackgroundService : BackgroundService
                             }
 
                             // Only mark processed after actual handler execution succeeds
+                            msg.Status = "Processed";
                             msg.ProcessedOnUtc = DateTime.UtcNow;
                             msg.Error = null;
                         }
@@ -103,7 +108,18 @@ public class OutboxProcessorBackgroundService : BackgroundService
                         {
                             msg.RetryCount++;
                             msg.Error = ex.Message;
-                            _logger.LogError(ex, "Failed to process outbox message {Id}, RetryCount={RetryCount}", msg.Id, msg.RetryCount);
+                            if (msg.RetryCount >= 5)
+                            {
+                                msg.Status = "DeadLetter";
+                                _logger.LogError(ex, "Outbox message {Id} exceeded retry limit. Moved to DeadLetter.", msg.Id);
+                            }
+                            else
+                            {
+                                msg.Status = "Failed";
+                                var delaySec = (int)Math.Pow(2, msg.RetryCount) * 5;
+                                msg.NextAttemptAtUtc = DateTime.UtcNow.AddSeconds(delaySec);
+                                _logger.LogWarning(ex, "Failed to process outbox message {Id}. Retry #{RetryCount} scheduled in {Seconds}s.", msg.Id, msg.RetryCount, delaySec);
+                            }
                         }
                     }
 
