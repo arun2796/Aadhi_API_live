@@ -332,6 +332,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.ProductCategories)
+            .Include(p => p.Reviews)
             .Where(p => !p.IsDeleted);
 
         if (filter.ProductType.HasValue)
@@ -404,6 +405,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.ProductCategories)
             .Include(p => p.BundleComponents)
                 .ThenInclude(b => b.ComponentProduct)
+            .Include(p => p.Reviews)
             .FirstOrDefaultAsync(p => p.Slug.ToLower() == slug.ToLower() && !p.IsDeleted, cancellationToken);
 
         if (product == null) return null;
@@ -413,6 +415,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => p.CategoryId == product.CategoryId && p.Id != product.Id && p.IsActive && !p.IsDeleted)
             .Take(4)
             .Select(p => MapToProductDto(p))
@@ -432,6 +435,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.ProductCategories)
             .Include(p => p.BundleComponents)
                 .ThenInclude(b => b.ComponentProduct)
+            .Include(p => p.Reviews)
             .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, cancellationToken);
 
         if (product == null) return null;
@@ -757,6 +761,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => p.IsFeatured && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -768,6 +773,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => p.IsBestSeller && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -779,6 +785,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => p.IsNewArrival && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -790,6 +797,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => (p.ProductType == ProductType.Bundle || p.Category.Name.ToLower().Contains("gift box") || p.Name.ToLower().Contains("gift box")) && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -801,6 +809,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => (p.Category.Name.ToLower().Contains("combo") || p.Name.ToLower().Contains("combo") || p.DiscountValue > 20) && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -810,6 +819,11 @@ public class CatalogService : ICatalogService
     {
         var primaryImage = p.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary)?.Url
             ?? p.Images.OrderBy(i => i.SortOrder).FirstOrDefault()?.Url;
+
+        // Calculate real rating from approved reviews
+        var approvedReviews = p.Reviews.Where(r => r.Status == "Approved" && !r.IsDeleted).ToList();
+        var rating = approvedReviews.Any() ? Math.Round(approvedReviews.Average(r => r.Rating), 1) : 0.0;
+        var reviewCount = approvedReviews.Count;
 
         return new ProductDto
         {
@@ -840,8 +854,8 @@ public class CatalogService : ICatalogService
             IsBestSeller = p.IsBestSeller,
             IsNewArrival = p.IsNewArrival,
             PrimaryImageUrl = primaryImage,
-            Rating = 4.8,
-            ReviewCount = 86
+            Rating = rating,
+            ReviewCount = reviewCount
         };
     }
 
