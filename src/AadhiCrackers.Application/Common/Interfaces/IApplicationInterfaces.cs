@@ -45,6 +45,7 @@ public interface IApplicationDbContext
     DbSet<PromotionRedemption> PromotionRedemptions { get; }
     DbSet<Quote> Quotes { get; }
     DbSet<QuoteItem> QuoteItems { get; }
+    DbSet<HomepageBanner> HomepageBanners { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);

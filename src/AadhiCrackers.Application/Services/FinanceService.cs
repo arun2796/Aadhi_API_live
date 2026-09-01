@@ -736,32 +736,56 @@ public class FinanceService : IFinanceService
             .Where(o => o.OrderStatus != OrderStatus.Cancelled && !o.IsDeleted);
 
         var expensesQuery = _context.Expenses.AsNoTracking().Where(e => !e.IsDeleted);
+        var refundsQuery = _context.Refunds.AsNoTracking().Where(r => r.Status == "Completed");
 
         if (fromDateUtc.HasValue)
         {
             ordersQuery = ordersQuery.Where(o => o.PlacedAtUtc >= fromDateUtc.Value);
             expensesQuery = expensesQuery.Where(e => e.ExpenseDateUtc >= fromDateUtc.Value);
+            refundsQuery = refundsQuery.Where(r => r.ProcessedAtUtc >= fromDateUtc.Value);
         }
 
         if (toDateUtc.HasValue)
         {
             ordersQuery = ordersQuery.Where(o => o.PlacedAtUtc <= toDateUtc.Value);
             expensesQuery = expensesQuery.Where(e => e.ExpenseDateUtc <= toDateUtc.Value);
+            refundsQuery = refundsQuery.Where(r => r.ProcessedAtUtc <= toDateUtc.Value);
         }
 
         var orders = await ordersQuery.ToListAsync(cancellationToken);
         var expenses = await expensesQuery.ToListAsync(cancellationToken);
+        var refunds = await refundsQuery.ToListAsync(cancellationToken);
 
-        // Net Sales = Subtotal - Discount (earned revenue excluding statutory taxes and carrier shipping)
-        decimal totalRevenue = orders.Sum(o => o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal());
+        decimal grossSales = orders.Sum(o => o.ItemsSubtotal.ToDecimal());
+        decimal discounts = orders.Sum(o => o.Discount.ToDecimal());
+        decimal returnsTotal = refunds.Sum(r => r.Amount.ToDecimal());
         decimal cogs = orders.SelectMany(o => o.Items).Sum(i => i.Quantity * i.CostPriceSnapshot.ToDecimal());
         decimal totalExpenses = expenses.Sum(e => e.Amount.ToDecimal());
 
+        var transport = expenses.Where(e => e.Category == ExpenseCategory.Transport).Sum(e => e.Amount.ToDecimal());
+        var packaging = expenses.Where(e => e.Category == ExpenseCategory.Packaging).Sum(e => e.Amount.ToDecimal());
+        var rentAndUtilities = expenses.Where(e => e.Category == ExpenseCategory.Rent || e.Category == ExpenseCategory.Electricity || e.Category == ExpenseCategory.Warehouse).Sum(e => e.Amount.ToDecimal());
+        var salaries = expenses.Where(e => e.Category == ExpenseCategory.Salary).Sum(e => e.Amount.ToDecimal());
+        var marketing = expenses.Where(e => e.Category == ExpenseCategory.Marketing).Sum(e => e.Amount.ToDecimal());
+        var officeAndAdmin = expenses.Where(e => e.Category == ExpenseCategory.Office || e.Category == ExpenseCategory.Other).Sum(e => e.Amount.ToDecimal());
+
         return new ProfitLossDto
         {
-            TotalRevenue = totalRevenue,
+            GrossSales = grossSales,
+            Discounts = discounts,
+            ReturnsTotal = returnsTotal,
             CostOfGoodsSold = cogs,
-            TotalExpenses = totalExpenses
+            OperatingExpenses = totalExpenses,
+            OperatingExpensesBreakdown = new ExpenseBreakdownDto
+            {
+                Transport = transport,
+                Packaging = packaging,
+                RentAndUtilities = rentAndUtilities,
+                Salaries = salaries,
+                Marketing = marketing,
+                OfficeAndAdmin = officeAndAdmin,
+                Total = totalExpenses
+            }
         };
     }
 }

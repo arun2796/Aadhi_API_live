@@ -3,6 +3,7 @@ using System;
 using AadhiCrackers.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AadhiCrackers.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AadhiDbContext))]
-    partial class AadhiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260901124134_AddHomepageBanners")]
+    partial class AddHomepageBanners
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.2");

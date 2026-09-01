@@ -120,6 +120,9 @@ public class ProductReview : BaseEntity<Guid>
     public Product Product { get; set; } = null!;
     public Guid? CustomerId { get; set; }
     public string CustomerName { get; set; } = string.Empty;
+    public Guid? OrderId { get; set; }
+    public Guid? OrderItemId { get; set; }
+    public string Title { get; set; } = string.Empty;
     public int Rating { get; set; } = 5;
     public string Comment { get; set; } = string.Empty;
     public string Status { get; set; } = "Approved"; // Pending, Approved, Rejected, Hidden

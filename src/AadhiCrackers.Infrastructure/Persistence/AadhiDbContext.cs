@@ -48,6 +48,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<PromotionRedemption> PromotionRedemptions => Set<PromotionRedemption>();
     public DbSet<Quote> Quotes => Set<Quote>();
     public DbSet<QuoteItem> QuoteItems => Set<QuoteItem>();
+    public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
 
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
@@ -557,6 +558,19 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.Property(qi => qi.UnitPrice).HasPrecision(18, 2);
             b.Property(qi => qi.LineTotal).HasPrecision(18, 2);
             b.Property(qi => qi.DiscountPercentage).HasPrecision(18, 2);
+        });
+
+        // HomepageBanner Configuration
+        builder.Entity<HomepageBanner>(b =>
+        {
+            b.HasKey(bn => bn.Id);
+            b.HasIndex(bn => bn.IsActive);
+            b.HasIndex(bn => bn.DisplayOrder);
+            b.Property(bn => bn.Title).IsRequired().HasMaxLength(150);
+            b.Property(bn => bn.ImageUrl).IsRequired().HasMaxLength(500);
+            b.Property(bn => bn.TargetUrl).HasMaxLength(500);
+            b.Property(bn => bn.CtaText).HasMaxLength(50);
+            b.HasQueryFilter(bn => !bn.IsDeleted);
         });
     }
 

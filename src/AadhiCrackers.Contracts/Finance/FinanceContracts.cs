@@ -182,14 +182,36 @@ public class PaymentMethodReportDto
     public int Percentage { get; set; }
 }
 
+public class ExpenseBreakdownDto
+{
+    public decimal Transport { get; set; }
+    public decimal Packaging { get; set; }
+    public decimal RentAndUtilities { get; set; }
+    public decimal Salaries { get; set; }
+    public decimal Marketing { get; set; }
+    public decimal OfficeAndAdmin { get; set; }
+    public decimal Total { get; set; }
+}
+
 public class ProfitLossDto
 {
-    public decimal TotalRevenue { get; set; }
+    public decimal GrossSales { get; set; }
+    public decimal TotalRevenue { get => GrossSales; set => GrossSales = value; }
+    public decimal Discounts { get; set; }
+    public decimal ReturnsTotal { get; set; }
+    public decimal NetRevenue => Math.Max(0, GrossSales - Discounts - ReturnsTotal);
+    public decimal NetSales => NetRevenue;
     public decimal CostOfGoodsSold { get; set; }
-    public decimal GrossProfit => TotalRevenue - CostOfGoodsSold;
-    public decimal TotalExpenses { get; set; }
-    public decimal NetProfit => GrossProfit - TotalExpenses;
-    public decimal ProfitMargin => TotalRevenue > 0 ? Math.Round((NetProfit / TotalRevenue) * 100, 2) : 0;
+    public decimal GrossProfit => NetRevenue - CostOfGoodsSold;
+    public decimal GrossMarginPercentage => NetRevenue > 0 ? Math.Round((GrossProfit / NetRevenue) * 100, 2) : 0;
+    public decimal OperatingExpenses { get; set; }
+    public decimal TotalExpenses { get => OperatingExpenses; set => OperatingExpenses = value; }
+    public ExpenseBreakdownDto OperatingExpensesBreakdown { get; set; } = new();
+    public decimal NetProfit => GrossProfit - OperatingExpenses;
+    public decimal NetOperatingProfit => NetProfit;
+    public decimal ProfitMargin => NetRevenue > 0 ? Math.Round((NetProfit / NetRevenue) * 100, 2) : 0;
+    public decimal NetMarginPercentage => ProfitMargin;
+    public decimal NetProfitMarginPercentage => ProfitMargin;
 }
 
 public class DashboardKpiDto
