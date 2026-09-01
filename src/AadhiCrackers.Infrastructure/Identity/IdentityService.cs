@@ -18,19 +18,22 @@ public class IdentityService : IIdentityService
     private readonly RoleManager<ApplicationRole> _roleManager;
     private readonly IApplicationDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly ICurrentUserService? _currentUser;
 
     public IdentityService(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         RoleManager<ApplicationRole> roleManager,
         IApplicationDbContext context,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ICurrentUserService? currentUser = null)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _roleManager = roleManager;
         _context = context;
         _configuration = configuration;
+        _currentUser = currentUser;
     }
 
     public async Task<AuthResponse> AuthenticateAsync(LoginRequest request, CancellationToken cancellationToken = default)
@@ -55,6 +58,8 @@ public class IdentityService : IIdentityService
             {
                 UserId = user.Id,
                 Email = request.Email,
+                IpAddress = _currentUser?.IpAddress,
+                UserAgent = _currentUser?.UserAgent,
                 TimestampUtc = DateTime.UtcNow,
                 Success = result.Succeeded,
                 FailureReason = result.Succeeded ? null : (result.IsLockedOut ? "Account is locked out" : "Invalid password")

@@ -20,12 +20,22 @@ namespace AadhiCrackers.Api.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly IOrderService _orderService;
+    private readonly ICustomerService _customerService;
     private readonly ICurrentUserService _currentUser;
 
-    public OrdersController(IOrderService orderService, ICurrentUserService currentUser)
+    public OrdersController(IOrderService orderService, ICustomerService customerService, ICurrentUserService currentUser)
     {
         _orderService = orderService;
+        _customerService = customerService;
         _currentUser = currentUser;
+    }
+
+    [HttpGet("my-orders")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<List<OrderDto>>>> GetMyOrders(CancellationToken cancellationToken)
+    {
+        var orders = await _orderService.GetMyOrdersAsync(cancellationToken);
+        return Ok(ApiResponse<List<OrderDto>>.Ok(orders, correlationId: _currentUser.CorrelationId));
     }
 
     [HttpGet]
@@ -39,9 +49,18 @@ public class OrdersController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         // Enforce customer ownership check to prevent IDOR
-        if (_currentUser.Role == "Customer" && Guid.TryParse(_currentUser.UserId, out var customerGuid))
+        if (_currentUser.Role == "Customer")
         {
-            var customerOrders = await _orderService.GetOrdersByCustomerIdAsync(customerGuid, page, pageSize, cancellationToken);
+            var customer = !string.IsNullOrWhiteSpace(_currentUser.UserId)
+                ? await _customerService.GetCustomerByUserIdAsync(_currentUser.UserId, cancellationToken)
+                : (!string.IsNullOrWhiteSpace(_currentUser.Email) ? await _customerService.GetCustomerByEmailAsync(_currentUser.Email, cancellationToken) : null);
+
+            if (customer == null)
+            {
+                return Ok(ApiResponse<PagedResult<OrderDto>>.Ok(new PagedResult<OrderDto>(new List<OrderDto>(), 0, page, pageSize), correlationId: _currentUser.CorrelationId));
+            }
+
+            var customerOrders = await _orderService.GetOrdersByCustomerIdAsync(customer.Id, page, pageSize, cancellationToken);
             return Ok(ApiResponse<PagedResult<OrderDto>>.Ok(customerOrders, correlationId: _currentUser.CorrelationId));
         }
 
@@ -58,10 +77,16 @@ public class OrdersController : ControllerBase
             return NotFound(ApiResponse<OrderDto>.Fail($"Order with ID '{id}' not found", _currentUser.CorrelationId));
 
         // Prevent IDOR: Customers can only view their own order
-        if (_currentUser.Role == "Customer" && Guid.TryParse(_currentUser.UserId, out var customerGuid))
+        if (_currentUser.Role == "Customer")
         {
-            if (order.CustomerId != customerGuid)
+            var customer = !string.IsNullOrWhiteSpace(_currentUser.UserId)
+                ? await _customerService.GetCustomerByUserIdAsync(_currentUser.UserId, cancellationToken)
+                : (!string.IsNullOrWhiteSpace(_currentUser.Email) ? await _customerService.GetCustomerByEmailAsync(_currentUser.Email, cancellationToken) : null);
+
+            if (customer == null || order.CustomerId != customer.Id)
+            {
                 return Forbid();
+            }
         }
 
         return Ok(ApiResponse<OrderDto>.Ok(order, correlationId: _currentUser.CorrelationId));
@@ -74,6 +99,18 @@ public class OrdersController : ControllerBase
         if (!Guid.TryParse(customerId, out var cid))
         {
             return Ok(ApiResponse<List<OrderDto>>.Ok(new List<OrderDto>(), correlationId: _currentUser.CorrelationId));
+        }
+
+        if (_currentUser.Role == "Customer")
+        {
+            var customer = !string.IsNullOrWhiteSpace(_currentUser.UserId)
+                ? await _customerService.GetCustomerByUserIdAsync(_currentUser.UserId, cancellationToken)
+                : (!string.IsNullOrWhiteSpace(_currentUser.Email) ? await _customerService.GetCustomerByEmailAsync(_currentUser.Email, cancellationToken) : null);
+
+            if (customer == null || customer.Id != cid)
+            {
+                return Forbid();
+            }
         }
 
         var orders = await _orderService.GetCustomerOrdersAsync(cid, cancellationToken);

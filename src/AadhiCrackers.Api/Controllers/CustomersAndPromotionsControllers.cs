@@ -55,9 +55,16 @@ public class CustomersController : ControllerBase
     [Authorize]
     public async Task<ActionResult<ApiResponse<List<OrderDto>>>> GetCustomerOrders(Guid id, CancellationToken cancellationToken)
     {
-        if (_currentUser.Role == "Customer" && Guid.TryParse(_currentUser.UserId, out var custId) && custId != id)
+        if (_currentUser.Role == "Customer")
         {
-            return Forbid();
+            var customer = !string.IsNullOrWhiteSpace(_currentUser.UserId)
+                ? await _customerService.GetCustomerByUserIdAsync(_currentUser.UserId, cancellationToken)
+                : (!string.IsNullOrWhiteSpace(_currentUser.Email) ? await _customerService.GetCustomerByEmailAsync(_currentUser.Email, cancellationToken) : null);
+
+            if (customer == null || customer.Id != id)
+            {
+                return Forbid();
+            }
         }
 
         var orders = await _orderService.GetCustomerOrdersAsync(id, cancellationToken);

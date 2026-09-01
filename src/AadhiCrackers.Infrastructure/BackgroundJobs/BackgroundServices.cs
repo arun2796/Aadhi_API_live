@@ -93,8 +93,17 @@ public class OutboxProcessorBackgroundService : BackgroundService
                                             }
                                             break;
                                         }
+                                    case "PaymentReceived":
+                                    case "ReturnInspected":
+                                    case "GoodsReceiptCreated":
+                                    case "InventoryAdjusted":
+                                    case "AuditLogCreated":
+                                        {
+                                            _logger.LogInformation("Successfully processed domain outbox event [{Id}] Type={Type}", msg.Id, msg.Type);
+                                            break;
+                                        }
                                     default:
-                                        _logger.LogDebug("Handled general outbox message type: {Type}", msg.Type);
+                                        _logger.LogInformation("Handled general outbox message type: {Type}", msg.Type);
                                         break;
                                 }
                             }

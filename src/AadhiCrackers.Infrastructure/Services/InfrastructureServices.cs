@@ -36,6 +36,11 @@ public class OutboxService : IOutboxService
 
 public class LocalFileStorageService : IFileStorageService
 {
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".pdf", ".gif"
+    };
+
     private readonly string _baseStoragePath;
 
     public LocalFileStorageService()
@@ -46,10 +51,15 @@ public class LocalFileStorageService : IFileStorageService
 
     public async Task<string> SaveFileAsync(Stream fileStream, string fileName, string folder = "products", CancellationToken cancellationToken = default)
     {
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(extension) || !AllowedExtensions.Contains(extension))
+        {
+            throw new ArgumentException($"File extension '{extension}' is not permitted. Allowed extensions: {string.Join(", ", AllowedExtensions)}");
+        }
+
         var targetFolder = Path.Combine(_baseStoragePath, folder);
         Directory.CreateDirectory(targetFolder);
 
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
         var uniqueFileName = $"{Guid.NewGuid():N}{extension}";
         var fullPath = Path.Combine(targetFolder, uniqueFileName);
 
@@ -122,6 +132,7 @@ public class SearchService : ISearchService
             .Include(p => p.Category)
             .Include(p => p.Brand)
             .Include(p => p.Images)
+            .Include(p => p.Reviews)
             .Where(p => p.IsActive && !p.IsDeleted &&
                         (p.Name.ToLower().Contains(q) ||
                          p.SKU.ToLower().Contains(q) ||
@@ -160,8 +171,10 @@ public class SearchService : ISearchService
                 PrimaryImageUrl = p.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary) != null
                     ? p.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary)!.Url
                     : p.Images.OrderBy(i => i.SortOrder).FirstOrDefault() != null ? p.Images.OrderBy(i => i.SortOrder).FirstOrDefault()!.Url : null,
-                Rating = 4.8,
-                ReviewCount = 86
+                Rating = p.Reviews.Any(r => r.Status == "Approved")
+                    ? Math.Round(p.Reviews.Where(r => r.Status == "Approved").Average(r => (double)r.Rating), 1)
+                    : 0,
+                ReviewCount = p.Reviews.Count(r => r.Status == "Approved")
             })
             .ToListAsync(cancellationToken);
 

@@ -13,6 +13,8 @@ public interface ICustomerService
 {
     Task<PagedResult<CustomerDto>> GetCustomersAsync(int page = 1, int pageSize = 20, string? search = null, CancellationToken cancellationToken = default);
     Task<CustomerDto?> GetCustomerByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<CustomerDto?> GetCustomerByUserIdAsync(string userId, CancellationToken cancellationToken = default);
+    Task<CustomerDto?> GetCustomerByEmailAsync(string email, CancellationToken cancellationToken = default);
     Task<CustomerDto> UpdateCustomerAsync(Guid id, UpdateCustomerRequest request, CancellationToken cancellationToken = default);
 }
 
@@ -25,6 +27,28 @@ public class CustomerService : ICustomerService
     {
         _context = context;
         _auditLog = auditLog;
+    }
+
+    public async Task<CustomerDto?> GetCustomerByUserIdAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        var customer = await _context.Customers
+            .Include(c => c.Addresses)
+            .Include(c => c.Orders)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.UserId == userId && !c.IsDeleted, cancellationToken);
+
+        return customer == null ? null : MapToDto(customer);
+    }
+
+    public async Task<CustomerDto?> GetCustomerByEmailAsync(string email, CancellationToken cancellationToken = default)
+    {
+        var customer = await _context.Customers
+            .Include(c => c.Addresses)
+            .Include(c => c.Orders)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Email.ToLower() == email.ToLower() && !c.IsDeleted, cancellationToken);
+
+        return customer == null ? null : MapToDto(customer);
     }
 
     public async Task<PagedResult<CustomerDto>> GetCustomersAsync(int page = 1, int pageSize = 20, string? search = null, CancellationToken cancellationToken = default)

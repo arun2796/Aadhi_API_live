@@ -1,7 +1,10 @@
 using System.Net;
 using System.Threading.RateLimiting;
+using AadhiCrackers.Application.Common.Interfaces;
+using AadhiCrackers.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AadhiCrackers.Api.Middleware;
 
@@ -44,6 +47,35 @@ public static class RateLimitingPolicies
                 problem.Extensions["correlationId"] = correlationId;
                 problem.Extensions["retryAfterSeconds"] = 60;
                 problem.Extensions["clientIp"] = ip;
+
+                try
+                {
+                    var scopeFactory = context.HttpContext.RequestServices.GetService<IServiceScopeFactory>();
+                    if (scopeFactory != null)
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var dbContext = scope.ServiceProvider.GetService<IApplicationDbContext>();
+                        if (dbContext != null)
+                        {
+                            var rateLimitLog = new RateLimitLog
+                            {
+                                TimestampUtc = DateTime.UtcNow,
+                                Endpoint = endpoint.ToString(),
+                                Policy = "RateLimitingPolicy",
+                                IpAddress = ip,
+                                RequestsCount = 1,
+                                BlockedCount = 1,
+                                Reason = "Rate limit threshold exceeded"
+                            };
+                            dbContext.RateLimitLogs.Add(rateLimitLog);
+                            await dbContext.SaveChangesAsync(token);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Non-blocking telemetry
+                }
 
                 await context.HttpContext.Response.WriteAsJsonAsync(problem, cancellationToken: token);
             };

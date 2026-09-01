@@ -20,6 +20,7 @@ public interface IOrderService
     Task<OrderDto?> GetOrderByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<OrderDto?> GetOrderByOrderNumberAsync(string orderNumber, CancellationToken cancellationToken = default);
     Task<List<OrderDto>> GetCustomerOrdersAsync(Guid customerId, CancellationToken cancellationToken = default);
+    Task<List<OrderDto>> GetMyOrdersAsync(CancellationToken cancellationToken = default);
     Task<PagedResult<OrderDto>> GetOrdersByCustomerIdAsync(Guid customerId, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
     Task<OrderTrackingDto?> TrackOrderAsync(string orderNumberOrPhone, CancellationToken cancellationToken = default);
     Task<OrderDto> SubmitPaymentProofAsync(Guid orderId, SubmitPaymentProofRequest request, CancellationToken cancellationToken = default);
@@ -645,6 +646,25 @@ public class OrderService : IOrderService
             .OrderByDescending(o => o.PlacedAtUtc)
             .Select(o => MapToOrderDto(o))
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<List<OrderDto>> GetMyOrdersAsync(CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+        {
+            return new List<OrderDto>();
+        }
+
+        var customer = await _context.Customers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.UserId == _currentUser.UserId || c.Email == _currentUser.Email, cancellationToken);
+
+        if (customer == null)
+        {
+            return new List<OrderDto>();
+        }
+
+        return await GetCustomerOrdersAsync(customer.Id, cancellationToken);
     }
 
     public async Task<PagedResult<OrderDto>> GetOrdersByCustomerIdAsync(Guid customerId, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
