@@ -553,6 +553,89 @@ public class IdentityService : IIdentityService
         };
     }
 
+    public async Task<AuthResponse> UpdateProfileAsync(string userId, UpdateProfileRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+        {
+            return new AuthResponse { Success = false, Message = "User not found." };
+        }
+
+        var firstName = request.FirstName?.Trim() ?? string.Empty;
+        var lastName = request.LastName?.Trim() ?? string.Empty;
+        var phone = request.Phone?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(firstName))
+        {
+            return new AuthResponse { Success = false, Message = "First name is required." };
+        }
+
+        if (!string.IsNullOrEmpty(phone) && (phone.Length != 10 || !phone.All(char.IsDigit)))
+        {
+            return new AuthResponse { Success = false, Message = "Phone number must be exactly 10 digits." };
+        }
+
+        if (!string.IsNullOrEmpty(phone))
+        {
+            var phoneTakenByUser = await _userManager.Users
+                .AnyAsync(u => u.PhoneNumber == phone && u.Id != user.Id, cancellationToken);
+            var phoneTakenByCustomer = await _context.Customers
+                .AnyAsync(c => c.Phone == phone && c.UserId != user.Id && !c.IsDeleted, cancellationToken);
+
+            if (phoneTakenByUser || phoneTakenByCustomer)
+            {
+                return new AuthResponse { Success = false, Message = "This phone number is already in use by another account." };
+            }
+        }
+
+        user.FirstName = firstName;
+        user.LastName = lastName;
+        user.PhoneNumber = string.IsNullOrEmpty(phone) ? null : phone;
+
+        var updateResult = await _userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+        {
+            var errors = string.Join(", ", updateResult.Errors.Select(e => e.Description));
+            return new AuthResponse { Success = false, Message = $"Failed to update profile: {errors}" };
+        }
+
+        // Keep the linked Customer entity in sync (linked by UserId; email is the legacy fallback).
+        var customer = await _context.Customers
+            .FirstOrDefaultAsync(c => c.UserId == user.Id && !c.IsDeleted, cancellationToken)
+            ?? await _context.Customers.FirstOrDefaultAsync(c => c.Email == user.Email && !c.IsDeleted, cancellationToken);
+
+        if (customer != null)
+        {
+            customer.UserId = user.Id;
+            customer.FirstName = user.FirstName;
+            customer.LastName = user.LastName;
+            customer.Phone = user.PhoneNumber ?? string.Empty;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var role = roles.FirstOrDefault() ?? AppRoles.Customer;
+        var permissions = GetPermissionsForRole(role);
+
+        return new AuthResponse
+        {
+            Success = true,
+            Message = "Profile updated successfully",
+            User = new UserDto
+            {
+                Id = user.Id,
+                Email = user.Email ?? string.Empty,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Phone = user.PhoneNumber ?? string.Empty,
+                Role = role,
+                Permissions = permissions,
+                IsActive = user.IsActive,
+                RewardPoints = await GetRewardPointsAsync(user.Id, role, cancellationToken)
+            }
+        };
+    }
+
     public async Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default)
     {
         var users = await _userManager.Users.AsNoTracking().ToListAsync(cancellationToken);

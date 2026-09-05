@@ -73,6 +73,7 @@ public interface IIdentityService
     Task<AuthResponse> CreateStaffUserAsync(CreateStaffUserRequest request, CancellationToken cancellationToken = default);
     Task<bool> ChangePasswordAsync(string userId, ChangePasswordRequest request, CancellationToken cancellationToken = default);
     Task<UserDto?> GetUserByIdAsync(string userId, CancellationToken cancellationToken = default);
+    Task<AuthResponse> UpdateProfileAsync(string userId, UpdateProfileRequest request, CancellationToken cancellationToken = default);
     Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default);
     Task<bool> UpdateUserRoleAsync(string userId, string role, CancellationToken cancellationToken = default);
     Task<bool> ToggleUserStatusAsync(string userId, bool isActive, CancellationToken cancellationToken = default);

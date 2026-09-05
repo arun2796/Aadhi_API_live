@@ -157,6 +157,24 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<UserDto>.Ok(user, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpPut("me")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<UserDto>>> UpdateCurrentUser([FromBody] UpdateProfileRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+        {
+            return Unauthorized(ApiResponse<UserDto>.Fail("Not authenticated", _currentUser.CorrelationId));
+        }
+
+        var response = await _identityService.UpdateProfileAsync(_currentUser.UserId, request, cancellationToken);
+        if (!response.Success || response.User == null)
+        {
+            return BadRequest(ApiResponse<UserDto>.Fail(response.Message ?? "Failed to update profile", _currentUser.CorrelationId));
+        }
+
+        return Ok(ApiResponse<UserDto>.Ok(response.User, "Profile updated successfully", _currentUser.CorrelationId));
+    }
+
     [HttpPost("logout")]
     public IActionResult Logout()
     {
