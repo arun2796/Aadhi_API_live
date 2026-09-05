@@ -15,6 +15,7 @@ public interface ICustomerService
     Task<CustomerDto?> GetCustomerByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<CustomerDto?> GetCustomerByUserIdAsync(string userId, CancellationToken cancellationToken = default);
     Task<CustomerDto?> GetCustomerByEmailAsync(string email, CancellationToken cancellationToken = default);
+    Task<CustomerDto> CreateCustomerAsync(CreateCustomerRequest request, CancellationToken cancellationToken = default);
     Task<CustomerDto> UpdateCustomerAsync(Guid id, UpdateCustomerRequest request, CancellationToken cancellationToken = default);
 }
 
@@ -92,6 +93,79 @@ public class CustomerService : ICustomerService
         return customer == null ? null : MapToDto(customer);
     }
 
+    public async Task<CustomerDto> CreateCustomerAsync(CreateCustomerRequest request, CancellationToken cancellationToken = default)
+    {
+        var firstName = request.FirstName.Trim();
+        var lastName = request.LastName?.Trim() ?? string.Empty;
+        var phone = request.Phone.Trim();
+        var email = request.Email?.Trim();
+
+        if (string.IsNullOrWhiteSpace(firstName))
+        {
+            throw new DomainException("First name is required.");
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(phone, @"^\d{10}$"))
+        {
+            throw new DomainException("Enter a valid 10-digit phone number.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(email) &&
+            !System.Text.RegularExpressions.Regex.IsMatch(email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$"))
+        {
+            throw new DomainException("A valid email address is required.");
+        }
+
+        var phoneExists = await _context.Customers.AnyAsync(c => c.Phone == phone && !c.IsDeleted, cancellationToken);
+        if (phoneExists)
+        {
+            throw new DomainException($"A customer with phone number '{phone}' already exists.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            var emailLower = email.ToLower();
+            var emailExists = await _context.Customers.AnyAsync(c => c.Email.ToLower() == emailLower && !c.IsDeleted, cancellationToken);
+            if (emailExists)
+            {
+                throw new DomainException($"A customer with email '{email}' already exists.");
+            }
+        }
+
+        var count = await _context.Customers.CountAsync(cancellationToken) + 1;
+        var customerCode = $"CUST-{DateTime.UtcNow:yyMM}-{count:D4}";
+
+        var customer = new Customer
+        {
+            CustomerCode = customerCode,
+            FirstName = firstName,
+            LastName = lastName,
+            // Email column has a unique index and is non-nullable — synthesize a placeholder
+            // (same convention as the Firebase auto-provision flow) when none is provided.
+            Email = !string.IsNullOrWhiteSpace(email) ? email : $"{customerCode.ToLower()}@customer.aadhicrackers.com",
+            Phone = phone,
+            IsActive = true
+        };
+
+        _context.Customers.Add(customer);
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+
+        await _auditLog.LogAsync(
+            AuditAction.Create,
+            "Customers",
+            nameof(Customer),
+            customer.Id.ToString(),
+            customer.FullName,
+            after: new { customer.CustomerCode, customer.FirstName, customer.LastName, customer.Email, customer.Phone, customer.IsActive },
+            cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return MapToDto(customer);
+    }
+
     public async Task<CustomerDto> UpdateCustomerAsync(Guid id, UpdateCustomerRequest request, CancellationToken cancellationToken = default)
     {
         var customer = await _context.Customers
@@ -139,6 +213,7 @@ public class CustomerService : ICustomerService
             Phone = c.Phone,
             DateOfBirth = c.DateOfBirth,
             IsActive = c.IsActive,
+            RewardPoints = c.RewardPoints,
             TotalOrders = nonCancelledOrders.Count,
             TotalSpent = nonCancelledOrders.Sum(o => o.GrandTotal.ToDecimal()),
             CreatedAtUtc = c.CreatedAtUtc,

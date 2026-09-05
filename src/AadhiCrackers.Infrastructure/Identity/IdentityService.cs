@@ -18,6 +18,7 @@ public class IdentityService : IIdentityService
     private readonly RoleManager<ApplicationRole> _roleManager;
     private readonly IApplicationDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly INotificationService _notificationService;
     private readonly ICurrentUserService? _currentUser;
 
     public IdentityService(
@@ -26,6 +27,7 @@ public class IdentityService : IIdentityService
         RoleManager<ApplicationRole> roleManager,
         IApplicationDbContext context,
         IConfiguration configuration,
+        INotificationService notificationService,
         ICurrentUserService? currentUser = null)
     {
         _userManager = userManager;
@@ -33,12 +35,16 @@ public class IdentityService : IIdentityService
         _roleManager = roleManager;
         _context = context;
         _configuration = configuration;
+        _notificationService = notificationService;
         _currentUser = currentUser;
     }
 
     public async Task<AuthResponse> AuthenticateAsync(LoginRequest request, CancellationToken cancellationToken = default)
     {
-        var user = await _userManager.FindByEmailAsync(request.Email);
+        // Back-compat: prefer the explicit email field; otherwise resolve the identifier
+        // (email when it contains '@', else lookup by phone number).
+        var loginKey = !string.IsNullOrWhiteSpace(request.Email) ? request.Email.Trim() : request.Identifier.Trim();
+        var user = await ResolveUserByIdentifierAsync(loginKey, cancellationToken);
         if (user == null)
         {
             return new AuthResponse { Success = false, Message = "Invalid email or password." };
@@ -57,7 +63,7 @@ public class IdentityService : IIdentityService
             _context.LoginHistories.Add(new LoginHistory
             {
                 UserId = user.Id,
-                Email = request.Email,
+                Email = user.Email ?? loginKey,
                 IpAddress = _currentUser?.IpAddress,
                 UserAgent = _currentUser?.UserAgent,
                 TimestampUtc = DateTime.UtcNow,
@@ -94,7 +100,8 @@ public class IdentityService : IIdentityService
             Phone = user.PhoneNumber ?? string.Empty,
             Role = role,
             Permissions = permissions,
-            IsActive = user.IsActive
+            IsActive = user.IsActive,
+            RewardPoints = await GetRewardPointsAsync(user.Id, role, cancellationToken)
         };
 
         return new AuthResponse
@@ -104,6 +111,186 @@ public class IdentityService : IIdentityService
             User = userDto,
             Token = token
         };
+    }
+
+    public async Task<AuthResponse> AuthenticateWithFirebaseAsync(FirebaseLoginRequest request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.IdToken))
+        {
+            return new AuthResponse { Success = false, Message = "Firebase token is required." };
+        }
+
+        string email = request.Email?.Trim() ?? string.Empty;
+        string name = request.DisplayName?.Trim() ?? string.Empty;
+        string phone = request.PhoneNumber?.Trim() ?? string.Empty;
+        string firebaseUid = string.Empty;
+
+        // Try reading claims from JWT token
+        try
+        {
+            var handler = new JwtSecurityTokenHandler();
+            if (handler.CanReadToken(request.IdToken))
+            {
+                var jwt = handler.ReadJwtToken(request.IdToken);
+
+                var emailClaim = jwt.Claims.FirstOrDefault(c => c.Type == "email" || c.Type == ClaimTypes.Email)?.Value;
+                if (!string.IsNullOrWhiteSpace(emailClaim)) email = emailClaim;
+
+                var nameClaim = jwt.Claims.FirstOrDefault(c => c.Type == "name" || c.Type == ClaimTypes.Name)?.Value;
+                if (!string.IsNullOrWhiteSpace(nameClaim)) name = nameClaim;
+
+                var phoneClaim = jwt.Claims.FirstOrDefault(c => c.Type == "phone_number" || c.Type == "phone" || c.Type == ClaimTypes.MobilePhone)?.Value;
+                if (!string.IsNullOrWhiteSpace(phoneClaim)) phone = phoneClaim;
+
+                var subClaim = jwt.Claims.FirstOrDefault(c => c.Type == "sub" || c.Type == "user_id" || c.Type == ClaimTypes.NameIdentifier)?.Value;
+                if (!string.IsNullOrWhiteSpace(subClaim)) firebaseUid = subClaim;
+            }
+        }
+        catch
+        {
+            // fallback to request-provided fields
+        }
+
+        if (string.IsNullOrWhiteSpace(email) && string.IsNullOrWhiteSpace(phone))
+        {
+            return new AuthResponse { Success = false, Message = "Unable to extract email or phone from Firebase credentials." };
+        }
+
+        var lookupKey = !string.IsNullOrWhiteSpace(email) ? email : phone;
+        var user = await ResolveUserByIdentifierAsync(lookupKey, cancellationToken);
+
+        if (user == null)
+        {
+            // Auto-provision Customer
+            var count = await _context.Customers.CountAsync(cancellationToken) + 1;
+            var customerCode = $"CUST-{DateTime.UtcNow:yyMM}-{count:D4}";
+
+            string firstName = "Customer";
+            string lastName = string.Empty;
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 0) firstName = parts[0];
+                if (parts.Length > 1) lastName = string.Join(" ", parts.Skip(1));
+            }
+            else if (!string.IsNullOrWhiteSpace(email))
+            {
+                firstName = email.Split('@')[0];
+            }
+
+            user = new ApplicationUser
+            {
+                UserName = !string.IsNullOrWhiteSpace(email) ? email : phone,
+                Email = !string.IsNullOrWhiteSpace(email) ? email : $"{customerCode.ToLower()}@customer.aadhicrackers.com",
+                PhoneNumber = phone,
+                FirstName = firstName,
+                LastName = lastName,
+                CustomerCode = customerCode,
+                EmailConfirmed = true,
+                PhoneNumberConfirmed = !string.IsNullOrWhiteSpace(phone),
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
+            var createRes = await _userManager.CreateAsync(user);
+            if (!createRes.Succeeded)
+            {
+                var errors = string.Join(", ", createRes.Errors.Select(e => e.Description));
+                return new AuthResponse { Success = false, Message = $"Failed to create user account: {errors}" };
+            }
+
+            await _userManager.AddToRoleAsync(user, AppRoles.Customer);
+
+            var customer = new Customer
+            {
+                UserId = user.Id,
+                CustomerCode = customerCode,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Email = user.Email,
+                Phone = user.PhoneNumber,
+                IsActive = true
+            };
+            _context.Customers.Add(customer);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        if (!user.IsActive)
+        {
+            return new AuthResponse { Success = false, Message = "Your account is deactivated. Please contact support." };
+        }
+
+        // Record Login History
+        try
+        {
+            _context.LoginHistories.Add(new LoginHistory
+            {
+                UserId = user.Id,
+                Email = user.Email ?? lookupKey,
+                IpAddress = _currentUser?.IpAddress,
+                UserAgent = _currentUser?.UserAgent,
+                TimestampUtc = DateTime.UtcNow,
+                Success = true,
+                FailureReason = null
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch { /* non-blocking audit */ }
+
+        user.LastLoginAtUtc = DateTime.UtcNow;
+        await _userManager.UpdateAsync(user);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var role = roles.FirstOrDefault() ?? AppRoles.Customer;
+        var permissions = GetPermissionsForRole(role);
+
+        var token = GenerateJwtToken(user, role, permissions);
+
+        var userDto = new UserDto
+        {
+            Id = user.Id,
+            Email = user.Email ?? string.Empty,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            Phone = user.PhoneNumber ?? string.Empty,
+            Role = role,
+            Permissions = permissions,
+            IsActive = user.IsActive,
+            RewardPoints = await GetRewardPointsAsync(user.Id, role, cancellationToken)
+        };
+
+        return new AuthResponse
+        {
+            Success = true,
+            Message = "Firebase login successful",
+            User = userDto,
+            Token = token
+        };
+    }
+
+    private async Task<ApplicationUser?> ResolveUserByIdentifierAsync(string identifier, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(identifier)) return null;
+
+        var key = identifier.Trim();
+        if (key.Contains('@'))
+        {
+            return await _userManager.FindByEmailAsync(key);
+        }
+
+        return await _userManager.Users.FirstOrDefaultAsync(u => u.PhoneNumber == key, cancellationToken)
+            ?? await _userManager.FindByEmailAsync(key);
+    }
+
+    private async Task<int?> GetRewardPointsAsync(string userId, string role, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(role, AppRoles.Customer, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var customer = await _context.Customers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.UserId == userId && !c.IsDeleted, cancellationToken);
+
+        return customer?.RewardPoints ?? 0;
     }
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
@@ -188,6 +375,79 @@ public class IdentityService : IIdentityService
         };
     }
 
+    public async Task<AuthResponse> CreateStaffUserAsync(CreateStaffUserRequest request, CancellationToken cancellationToken = default)
+    {
+        var staffRoles = new[]
+        {
+            AppRoles.SuperAdmin, AppRoles.Admin, AppRoles.Manager, AppRoles.SalesExecutive,
+            AppRoles.InventoryManager, AppRoles.PurchaseManager, AppRoles.Accountant, AppRoles.SupportAgent
+        };
+
+        var requestedRole = request.Role?.Trim() ?? string.Empty;
+        var role = staffRoles.FirstOrDefault(r => string.Equals(r, requestedRole, StringComparison.OrdinalIgnoreCase));
+        if (role == null)
+        {
+            return new AuthResponse
+            {
+                Success = false,
+                Message = $"Invalid role '{requestedRole}'. Valid roles: {string.Join(", ", staffRoles)}."
+            };
+        }
+
+        var email = request.Email.Trim();
+        var existing = await _userManager.FindByEmailAsync(email);
+        if (existing != null)
+        {
+            return new AuthResponse { Success = false, Message = "An account with this email address already exists." };
+        }
+
+        var user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            FirstName = request.FirstName.Trim(),
+            LastName = request.LastName?.Trim() ?? string.Empty,
+            EmailConfirmed = true,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        var result = await _userManager.CreateAsync(user, request.Password);
+        if (!result.Succeeded)
+        {
+            var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+            return new AuthResponse { Success = false, Message = errors };
+        }
+
+        var roleResult = await _userManager.AddToRoleAsync(user, role);
+        if (!roleResult.Succeeded)
+        {
+            // Roll back the half-created account so a retry can succeed.
+            await _userManager.DeleteAsync(user);
+            var errors = string.Join(", ", roleResult.Errors.Select(e => e.Description));
+            return new AuthResponse { Success = false, Message = $"Failed to assign role '{role}': {errors}" };
+        }
+
+        // Deliberately no token and no sign-in: the admin creates the account,
+        // the new staff member logs in themselves.
+        return new AuthResponse
+        {
+            Success = true,
+            Message = "User created successfully",
+            User = new UserDto
+            {
+                Id = user.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Phone = user.PhoneNumber ?? string.Empty,
+                Role = role,
+                Permissions = GetPermissionsForRole(role),
+                IsActive = user.IsActive
+            }
+        };
+    }
+
     public async Task<bool> ChangePasswordAsync(string userId, ChangePasswordRequest request, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByIdAsync(userId);
@@ -214,7 +474,8 @@ public class IdentityService : IIdentityService
             Phone = user.PhoneNumber ?? string.Empty,
             Role = role,
             Permissions = GetPermissionsForRole(role),
-            IsActive = user.IsActive
+            IsActive = user.IsActive,
+            RewardPoints = await GetRewardPointsAsync(user.Id, role, cancellationToken)
         };
     }
 
@@ -310,6 +571,104 @@ public class IdentityService : IIdentityService
             .ToListAsync(cancellationToken);
     }
 
+
+    private const string PasswordResetPurpose = "PasswordReset";
+
+    public async Task<string?> GeneratePasswordResetOtpAsync(string identifier, CancellationToken cancellationToken = default)
+    {
+        var user = await ResolveUserByIdentifierAsync(identifier, cancellationToken);
+        if (user == null || !user.IsActive)
+        {
+            // Do not leak account existence — caller returns a generic message either way.
+            return null;
+        }
+
+        // Invalidate any prior active OTPs for this user
+        var now = DateTime.UtcNow;
+        var activeOtps = await _context.OtpVerifications
+            .Where(o => o.UserId == user.Id && o.Purpose == PasswordResetPurpose && o.ConsumedAtUtc == null)
+            .ToListAsync(cancellationToken);
+        foreach (var prior in activeOtps)
+        {
+            prior.ConsumedAtUtc = now;
+            prior.ResetToken = null;
+            prior.ResetTokenExpiresAtUtc = null;
+        }
+
+        var code = System.Security.Cryptography.RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+        _context.OtpVerifications.Add(new OtpVerification
+        {
+            UserId = user.Id,
+            Code = code,
+            Purpose = PasswordResetPurpose,
+            ExpiresAtUtc = now.AddMinutes(5)
+        });
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var recipient = identifier.Contains('@') ? (user.Email ?? identifier) : (user.PhoneNumber ?? identifier);
+        await _notificationService.SendPasswordResetOtpAsync(recipient, code, cancellationToken);
+
+        return code;
+    }
+
+    public async Task<string?> VerifyPasswordResetOtpAsync(string identifier, string otp, CancellationToken cancellationToken = default)
+    {
+        var user = await ResolveUserByIdentifierAsync(identifier, cancellationToken);
+        if (user == null || string.IsNullOrWhiteSpace(otp)) return null;
+
+        var now = DateTime.UtcNow;
+        var code = otp.Trim();
+        var otpEntry = await _context.OtpVerifications
+            .Where(o => o.UserId == user.Id
+                        && o.Purpose == PasswordResetPurpose
+                        && o.Code == code
+                        && o.ConsumedAtUtc == null
+                        && o.ExpiresAtUtc > now)
+            .OrderByDescending(o => o.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (otpEntry == null) return null;
+
+        // OTP is single-use: consume it and issue a short-lived reset token.
+        otpEntry.ConsumedAtUtc = now;
+        otpEntry.ResetToken = Guid.NewGuid().ToString("N");
+        otpEntry.ResetTokenExpiresAtUtc = now.AddMinutes(10);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return otpEntry.ResetToken;
+    }
+
+    public async Task<bool> ResetPasswordWithTokenAsync(string resetToken, string newPassword, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(resetToken) || string.IsNullOrWhiteSpace(newPassword)) return false;
+
+        var now = DateTime.UtcNow;
+        var token = resetToken.Trim();
+        var otpEntry = await _context.OtpVerifications
+            .Where(o => o.ResetToken == token
+                        && o.Purpose == PasswordResetPurpose
+                        && o.ResetTokenExpiresAtUtc != null
+                        && o.ResetTokenExpiresAtUtc > now)
+            .OrderByDescending(o => o.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (otpEntry == null) return false;
+
+        var user = await _userManager.FindByIdAsync(otpEntry.UserId);
+        if (user == null) return false;
+
+        var identityToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var result = await _userManager.ResetPasswordAsync(user, identityToken, newPassword);
+        if (!result.Succeeded) return false;
+
+        // Reset token is single-use.
+        otpEntry.ResetToken = null;
+        otpEntry.ResetTokenExpiresAtUtc = null;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return true;
+    }
 
     private string GenerateJwtToken(ApplicationUser user, string role, List<string> permissions)
     {

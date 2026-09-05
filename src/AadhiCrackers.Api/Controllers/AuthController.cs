@@ -14,11 +14,13 @@ public class AuthController : ControllerBase
 {
     private readonly IIdentityService _identityService;
     private readonly ICurrentUserService _currentUser;
+    private readonly IWebHostEnvironment _environment;
 
-    public AuthController(IIdentityService identityService, ICurrentUserService currentUser)
+    public AuthController(IIdentityService identityService, ICurrentUserService currentUser, IWebHostEnvironment environment)
     {
         _identityService = identityService;
         _currentUser = currentUser;
+        _environment = environment;
     }
 
     [HttpPost("login")]
@@ -43,6 +45,28 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<AuthResponse>.Ok(response, "Login successful", _currentUser.CorrelationId));
     }
 
+    [HttpPost("firebase-login")]
+    [EnableRateLimiting(RateLimitingPolicies.Login)]
+    public async Task<ActionResult<ApiResponse<AuthResponse>>> FirebaseLogin([FromBody] FirebaseLoginRequest request, CancellationToken cancellationToken)
+    {
+        var response = await _identityService.AuthenticateWithFirebaseAsync(request, cancellationToken);
+        if (!response.Success)
+        {
+            return BadRequest(ApiResponse<AuthResponse>.Fail(response.Message ?? "Firebase authentication failed", _currentUser.CorrelationId));
+        }
+
+        // Set secure auth cookie
+        Response.Cookies.Append("AadhiAuth", response.Token ?? "session", new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddDays(30)
+        });
+
+        return Ok(ApiResponse<AuthResponse>.Ok(response, "Firebase login successful", _currentUser.CorrelationId));
+    }
+
     [HttpPost("register")]
     [EnableRateLimiting(RateLimitingPolicies.PublicGeneral)]
     public async Task<ActionResult<ApiResponse<AuthResponse>>> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
@@ -54,6 +78,66 @@ public class AuthController : ControllerBase
         }
 
         return Ok(ApiResponse<AuthResponse>.Ok(response, "Registration successful", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting(RateLimitingPolicies.PasswordReset)]
+    public async Task<ActionResult<ApiResponse<ForgotPasswordResponse>>> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken cancellationToken)
+    {
+        return await SendPasswordResetOtpAsync(request, cancellationToken);
+    }
+
+    [HttpPost("resend-otp")]
+    [EnableRateLimiting(RateLimitingPolicies.PasswordReset)]
+    public async Task<ActionResult<ApiResponse<ForgotPasswordResponse>>> ResendOtp([FromBody] ForgotPasswordRequest request, CancellationToken cancellationToken)
+    {
+        return await SendPasswordResetOtpAsync(request, cancellationToken);
+    }
+
+    private async Task<ActionResult<ApiResponse<ForgotPasswordResponse>>> SendPasswordResetOtpAsync(ForgotPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var identifier = !string.IsNullOrWhiteSpace(request.Identifier) ? request.Identifier : request.Email;
+        var otp = await _identityService.GeneratePasswordResetOtpAsync(identifier, cancellationToken);
+
+        // Always 200 — never reveal whether an account exists.
+        var response = new ForgotPasswordResponse
+        {
+            Message = "If an account exists for this mobile number or email, an OTP has been sent.",
+            DevOtp = _environment.IsDevelopment() ? otp : null
+        };
+
+        return Ok(ApiResponse<ForgotPasswordResponse>.Ok(response, response.Message, _currentUser.CorrelationId));
+    }
+
+    [HttpPost("verify-otp")]
+    [EnableRateLimiting(RateLimitingPolicies.Login)]
+    public async Task<ActionResult<ApiResponse<VerifyOtpResponse>>> VerifyOtp([FromBody] VerifyOtpRequest request, CancellationToken cancellationToken)
+    {
+        var resetToken = await _identityService.VerifyPasswordResetOtpAsync(request.Identifier, request.Otp, cancellationToken);
+        if (string.IsNullOrWhiteSpace(resetToken))
+        {
+            return BadRequest(ApiResponse<VerifyOtpResponse>.Fail("Invalid or expired OTP.", _currentUser.CorrelationId));
+        }
+
+        return Ok(ApiResponse<VerifyOtpResponse>.Ok(new VerifyOtpResponse { ResetToken = resetToken }, "OTP verified successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("reset-password")]
+    [EnableRateLimiting(RateLimitingPolicies.Login)]
+    public async Task<ActionResult<ApiResponse<bool>>> ResetPassword([FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(request.NewPassword, request.ConfirmNewPassword, StringComparison.Ordinal))
+        {
+            return BadRequest(ApiResponse<bool>.Fail("Passwords do not match.", _currentUser.CorrelationId));
+        }
+
+        var success = await _identityService.ResetPasswordWithTokenAsync(request.ResetToken, request.NewPassword, cancellationToken);
+        if (!success)
+        {
+            return BadRequest(ApiResponse<bool>.Fail("Invalid or expired reset token, or the password does not meet the policy.", _currentUser.CorrelationId));
+        }
+
+        return Ok(ApiResponse<bool>.Ok(true, "Password reset successfully", _currentUser.CorrelationId));
     }
 
     [HttpGet("me")]
@@ -92,6 +176,20 @@ public class AuthController : ControllerBase
             return BadRequest(ApiResponse<bool>.Fail("Failed to change password. Ensure current password is correct.", _currentUser.CorrelationId));
 
         return Ok(ApiResponse<bool>.Ok(true, "Password changed successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("users")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<UserDto>>> CreateStaffUser([FromBody] CreateStaffUserRequest request, CancellationToken cancellationToken)
+    {
+        var response = await _identityService.CreateStaffUserAsync(request, cancellationToken);
+        if (!response.Success || response.User == null)
+        {
+            return BadRequest(ApiResponse<UserDto>.Fail(response.Message ?? "Failed to create user", _currentUser.CorrelationId));
+        }
+
+        return Ok(ApiResponse<UserDto>.Ok(response.User, "User created successfully", _currentUser.CorrelationId));
     }
 
     [HttpGet("users")]

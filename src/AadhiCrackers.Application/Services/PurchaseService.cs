@@ -12,7 +12,10 @@ namespace AadhiCrackers.Application.Services;
 public interface IPurchaseService
 {
     Task<List<SupplierDto>> GetSuppliersAsync(CancellationToken cancellationToken = default);
+    Task<SupplierDto?> GetSupplierByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<SupplierDto> CreateSupplierAsync(CreateSupplierRequest request, CancellationToken cancellationToken = default);
+    Task<SupplierDto> UpdateSupplierAsync(Guid id, UpdateSupplierRequest request, CancellationToken cancellationToken = default);
+    Task<bool> DeleteSupplierAsync(Guid id, CancellationToken cancellationToken = default);
     Task<PagedResult<PurchaseOrderDto>> GetPurchaseOrdersAsync(int page = 1, int pageSize = 20, PurchaseOrderStatus? status = null, CancellationToken cancellationToken = default);
     Task<PurchaseOrderDto?> GetPurchaseOrderByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<PurchaseOrderDto> CreatePurchaseOrderAsync(CreatePurchaseOrderRequest request, CancellationToken cancellationToken = default);
@@ -110,6 +113,96 @@ public class PurchaseService : IPurchaseService
             TotalPurchaseOrders = 0
         };
     }
+
+    public async Task<SupplierDto?> GetSupplierByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var supplier = await _context.Suppliers
+            .AsNoTracking()
+            .Include(s => s.PurchaseOrders)
+            .FirstOrDefaultAsync(s => s.Id == id && !s.IsDeleted, cancellationToken);
+
+        return supplier == null ? null : MapToSupplierDto(supplier);
+    }
+
+    public async Task<SupplierDto> UpdateSupplierAsync(Guid id, UpdateSupplierRequest request, CancellationToken cancellationToken = default)
+    {
+        var supplier = await _context.Suppliers
+            .Include(s => s.PurchaseOrders)
+            .FirstOrDefaultAsync(s => s.Id == id && !s.IsDeleted, cancellationToken)
+            ?? throw new ResourceNotFoundException(nameof(Supplier), id);
+
+        var before = new { supplier.Name, supplier.ContactPerson, supplier.Email, supplier.Phone, supplier.Address, supplier.GstNumber, supplier.IsActive };
+
+        supplier.Name = request.Name.Trim();
+        supplier.ContactPerson = request.ContactPerson;
+        supplier.Email = request.Email;
+        supplier.Phone = request.Phone.Trim();
+        supplier.Address = request.Address;
+        supplier.GstNumber = request.GstNumber;
+        supplier.IsActive = request.IsActive;
+        supplier.UpdatedAtUtc = DateTime.UtcNow;
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+
+        await _auditLog.LogAsync(
+            AuditAction.Update,
+            "Suppliers",
+            nameof(Supplier),
+            supplier.Id.ToString(),
+            supplier.Name,
+            before: before,
+            after: new { supplier.Name, supplier.ContactPerson, supplier.Email, supplier.Phone, supplier.Address, supplier.GstNumber, supplier.IsActive },
+            cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return MapToSupplierDto(supplier);
+    }
+
+    public async Task<bool> DeleteSupplierAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var supplier = await _context.Suppliers
+            .FirstOrDefaultAsync(s => s.Id == id && !s.IsDeleted, cancellationToken);
+        if (supplier == null)
+        {
+            return false;
+        }
+
+        // Soft delete — matches the existing IsDeleted/query-filter pattern
+        supplier.IsDeleted = true;
+        supplier.IsActive = false;
+        supplier.UpdatedAtUtc = DateTime.UtcNow;
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+
+        await _auditLog.LogAsync(
+            AuditAction.Delete,
+            "Suppliers",
+            nameof(Supplier),
+            supplier.Id.ToString(),
+            supplier.Name,
+            cancellationToken: cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return true;
+    }
+
+    private static SupplierDto MapToSupplierDto(Supplier supplier) => new()
+    {
+        Id = supplier.Id,
+        Code = supplier.Code,
+        Name = supplier.Name,
+        ContactPerson = supplier.ContactPerson,
+        Email = supplier.Email,
+        Phone = supplier.Phone,
+        Address = supplier.Address,
+        GstNumber = supplier.GstNumber,
+        IsActive = supplier.IsActive,
+        TotalPurchaseOrders = supplier.PurchaseOrders.Count
+    };
 
     public async Task<PagedResult<PurchaseOrderDto>> GetPurchaseOrdersAsync(int page = 1, int pageSize = 20, PurchaseOrderStatus? status = null, CancellationToken cancellationToken = default)
     {

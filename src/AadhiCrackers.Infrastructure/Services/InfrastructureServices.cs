@@ -133,6 +133,14 @@ public class NotificationService : INotificationService
             product.Name, product.SKU, currentStock, product.ReorderLevel);
         return Task.CompletedTask;
     }
+
+    public Task SendPasswordResetOtpAsync(string recipient, string otpCode, CancellationToken cancellationToken = default)
+    {
+        // Logging stub — replace with SMS/email gateway integration in production.
+        _logger.LogInformation("📧 [Notification Service] Password reset OTP {OtpCode} dispatched to {Recipient} (valid for 5 minutes)",
+            otpCode, recipient);
+        return Task.CompletedTask;
+    }
 }
 
 public class SearchService : ISearchService

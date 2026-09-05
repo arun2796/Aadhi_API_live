@@ -11,8 +11,43 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 {
     public LoginRequestValidator()
     {
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().WithMessage("A valid email address is required.");
+        RuleFor(x => x)
+            .Must(x => !string.IsNullOrWhiteSpace(x.Email) || !string.IsNullOrWhiteSpace(x.Identifier))
+            .WithMessage("An email address or identifier (email/phone) is required.")
+            .WithName(nameof(LoginRequest.Email));
+        RuleFor(x => x.Email).EmailAddress().WithMessage("A valid email address is required.")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
         RuleFor(x => x.Password).NotEmpty().MinimumLength(6).WithMessage("Password must be at least 6 characters.");
+    }
+}
+
+public class ForgotPasswordRequestValidator : AbstractValidator<ForgotPasswordRequest>
+{
+    public ForgotPasswordRequestValidator()
+    {
+        RuleFor(x => x)
+            .Must(x => !string.IsNullOrWhiteSpace(x.Identifier) || !string.IsNullOrWhiteSpace(x.Email))
+            .WithMessage("An identifier (mobile number or email) is required.")
+            .WithName(nameof(ForgotPasswordRequest.Identifier));
+    }
+}
+
+public class VerifyOtpRequestValidator : AbstractValidator<VerifyOtpRequest>
+{
+    public VerifyOtpRequestValidator()
+    {
+        RuleFor(x => x.Identifier).NotEmpty().WithMessage("An identifier (mobile number or email) is required.");
+        RuleFor(x => x.Otp).NotEmpty().Length(6).Matches(@"^\d{6}$").WithMessage("A 6-digit OTP is required.");
+    }
+}
+
+public class ResetPasswordRequestValidator : AbstractValidator<ResetPasswordRequest>
+{
+    public ResetPasswordRequestValidator()
+    {
+        RuleFor(x => x.ResetToken).NotEmpty().WithMessage("A reset token is required.");
+        RuleFor(x => x.NewPassword).NotEmpty().MinimumLength(6).WithMessage("Password must be at least 6 characters.");
+        RuleFor(x => x.ConfirmNewPassword).Equal(x => x.NewPassword).WithMessage("Passwords do not match.");
     }
 }
 
@@ -26,6 +61,30 @@ public class RegisterRequestValidator : AbstractValidator<RegisterRequest>
         RuleFor(x => x.Phone).NotEmpty().Matches(@"^[6-9]\d{9}$").WithMessage("Enter a valid 10-digit Indian phone number.");
         RuleFor(x => x.Password).NotEmpty().MinimumLength(6);
         RuleFor(x => x.ConfirmPassword).Equal(x => x.Password).WithMessage("Passwords do not match.");
+    }
+}
+
+public class CreateStaffUserRequestValidator : AbstractValidator<CreateStaffUserRequest>
+{
+    public CreateStaffUserRequestValidator()
+    {
+        RuleFor(x => x.FirstName).NotEmpty().MaximumLength(50);
+        RuleFor(x => x.LastName).MaximumLength(50);
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Password).NotEmpty().MinimumLength(6).WithMessage("Password must be at least 6 characters.");
+        RuleFor(x => x.Role).NotEmpty().WithMessage("A role is required.");
+    }
+}
+
+public class CreateCustomerRequestValidator : AbstractValidator<AadhiCrackers.Contracts.Customers.CreateCustomerRequest>
+{
+    public CreateCustomerRequestValidator()
+    {
+        RuleFor(x => x.FirstName).NotEmpty().MaximumLength(50);
+        RuleFor(x => x.LastName).MaximumLength(50);
+        RuleFor(x => x.Phone).NotEmpty().Matches(@"^\d{10}$").WithMessage("Enter a valid 10-digit phone number.");
+        RuleFor(x => x.Email).EmailAddress().WithMessage("A valid email address is required.")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
     }
 }
 

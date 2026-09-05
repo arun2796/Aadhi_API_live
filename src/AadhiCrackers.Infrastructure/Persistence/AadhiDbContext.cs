@@ -49,6 +49,8 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<Quote> Quotes => Set<Quote>();
     public DbSet<QuoteItem> QuoteItems => Set<QuoteItem>();
     public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
+    public DbSet<OtpVerification> OtpVerifications => Set<OtpVerification>();
+    public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
 
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
@@ -558,6 +560,38 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.Property(qi => qi.UnitPrice).HasPrecision(18, 2);
             b.Property(qi => qi.LineTotal).HasPrecision(18, 2);
             b.Property(qi => qi.DiscountPercentage).HasPrecision(18, 2);
+        });
+
+        // OtpVerification Configuration
+        builder.Entity<OtpVerification>(b =>
+        {
+            b.HasKey(o => o.Id);
+            b.HasIndex(o => o.UserId);
+            b.HasIndex(o => o.ResetToken);
+            b.HasIndex(o => o.ExpiresAtUtc);
+            b.Property(o => o.UserId).IsRequired().HasMaxLength(64);
+            b.Property(o => o.Code).IsRequired().HasMaxLength(10);
+            b.Property(o => o.Purpose).IsRequired().HasMaxLength(50);
+            b.Property(o => o.ResetToken).HasMaxLength(64);
+        });
+
+        // WishlistItem Configuration
+        builder.Entity<WishlistItem>(b =>
+        {
+            b.HasKey(w => w.Id);
+            b.HasIndex(w => new { w.CustomerId, w.ProductId }).IsUnique();
+
+            b.HasOne(w => w.Customer)
+                .WithMany()
+                .HasForeignKey(w => w.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasOne(w => w.Product)
+                .WithMany()
+                .HasForeignKey(w => w.ProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasQueryFilter(w => !w.IsDeleted);
         });
 
         // HomepageBanner Configuration

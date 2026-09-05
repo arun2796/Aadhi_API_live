@@ -152,6 +152,22 @@ public class CartService : ICartService
             }
         }
 
+        // Shipping charge (standard delivery) from SystemSettings; free above the threshold
+        var deliverySettings = await _context.SystemSettings
+            .AsNoTracking()
+            .Where(s => (s.Key == "Delivery.StandardCharge" || s.Key == "Shipping.FreeShippingThreshold") && !s.IsDeleted)
+            .ToDictionaryAsync(s => s.Key, s => s.Value, cancellationToken);
+
+        decimal ParseSetting(string key, decimal fallback) =>
+            deliverySettings.TryGetValue(key, out var raw)
+            && decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+                ? value
+                : fallback;
+
+        var standardCharge = ParseSetting("Delivery.StandardCharge", 40m);
+        var freeThreshold = ParseSetting("Shipping.FreeShippingThreshold", 3000m);
+        result.ShippingCharge = result.Subtotal >= freeThreshold ? 0m : standardCharge;
+
         return result;
     }
 }

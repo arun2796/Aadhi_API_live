@@ -150,7 +150,8 @@ public enum AuditAction
     ReturnReceived = 30,
     QuoteCreated = 31,
     QuoteConverted = 32,
-    QuoteStatusChanged = 33
+    QuoteStatusChanged = 33,
+    ReturnRejected = 34
 }
 
 public enum AuditSeverity

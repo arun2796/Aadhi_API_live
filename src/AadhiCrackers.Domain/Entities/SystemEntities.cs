@@ -53,6 +53,17 @@ public class SystemSetting : BaseEntity<Guid>
     public bool IsEncrypted { get; set; }
 }
 
+public class OtpVerification : BaseEntity<Guid>
+{
+    public string UserId { get; set; } = string.Empty; // ASP.NET Identity User ID
+    public string Code { get; set; } = string.Empty; // 6-digit OTP
+    public string Purpose { get; set; } = "PasswordReset";
+    public DateTime ExpiresAtUtc { get; set; }
+    public DateTime? ConsumedAtUtc { get; set; }
+    public string? ResetToken { get; set; }
+    public DateTime? ResetTokenExpiresAtUtc { get; set; }
+}
+
 public class LoginHistory : BaseEntity<Guid>
 {
     public string? UserId { get; set; }

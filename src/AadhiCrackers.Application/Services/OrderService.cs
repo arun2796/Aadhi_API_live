@@ -24,14 +24,17 @@ public interface IOrderService
     Task<PagedResult<OrderDto>> GetOrdersByCustomerIdAsync(Guid customerId, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default);
     Task<OrderTrackingDto?> TrackOrderAsync(string orderNumberOrPhone, CancellationToken cancellationToken = default);
     Task<OrderDto> SubmitPaymentProofAsync(Guid orderId, SubmitPaymentProofRequest request, CancellationToken cancellationToken = default);
+    Task<List<DeliveryOptionDto>> GetDeliveryOptionsAsync(decimal subtotal, CancellationToken cancellationToken = default);
 
     // Return Order Workflow (Phase 7)
     Task<ReturnOrderDto> CreateReturnOrderAsync(CreateReturnOrderRequest request, CancellationToken cancellationToken = default);
     Task<ReturnOrderDto> ApproveReturnOrderAsync(Guid returnId, string? notes = null, CancellationToken cancellationToken = default);
     Task<ReturnOrderDto> ReceiveReturnOrderAsync(Guid returnId, string? notes = null, CancellationToken cancellationToken = default);
     Task<ReturnOrderDto> InspectReturnOrderAsync(Guid returnId, InspectReturnOrderRequest request, CancellationToken cancellationToken = default);
+    Task<ReturnOrderDto> RejectReturnOrderAsync(Guid returnId, RejectReturnOrderRequest request, CancellationToken cancellationToken = default);
     Task<PagedResult<ReturnOrderDto>> GetReturnOrdersAsync(int page = 1, int pageSize = 20, string? status = null, CancellationToken cancellationToken = default);
     Task<ReturnOrderDto?> GetReturnOrderByIdAsync(Guid returnId, CancellationToken cancellationToken = default);
+    Task<List<CustomerReturnDto>> GetMyReturnsAsync(CancellationToken cancellationToken = default);
 }
 
 public class OrderService : IOrderService
@@ -101,6 +104,7 @@ public class OrderService : IOrderService
             .ToDictionaryAsync(p => p.Id, cancellationToken);
 
         var orderNumber = await _numberGenerator.GenerateOrderNumberAsync(cancellationToken);
+        var deliveryMethod = NormalizeDeliveryMethod(request.DeliveryMethod);
 
         var order = new Order
         {
@@ -108,6 +112,7 @@ public class OrderService : IOrderService
             OrderNumber = orderNumber,
             CustomerId = customer.Id,
             WarehouseId = warehouse.Id,
+            DeliveryMethod = deliveryMethod,
             PaymentMethod = request.PaymentMethod,
             PaymentStatus = PaymentStatus.Pending,
             FulfillmentStatus = FulfillmentStatus.Unfulfilled,
@@ -259,8 +264,13 @@ public class OrderService : IOrderService
         }
         order.Discount = discount;
 
-        // Shipping calculation: Free above ₹3000, else ₹150
-        var shippingCharge = itemsSubtotal >= Money.FromDecimal(3000m) ? Money.Zero() : Money.FromDecimal(150m);
+        // Shipping calculation from SystemSettings (Delivery.* keys):
+        // standard becomes free at/above the free-shipping threshold; express is never free.
+        var settings = await GetDeliverySettingsAsync(cancellationToken);
+        var shippingAmount = deliveryMethod == DeliveryMethodExpress
+            ? settings.ExpressCharge
+            : (itemsSubtotal.ToDecimal() >= settings.FreeShippingThreshold ? 0m : settings.StandardCharge);
+        var shippingCharge = Money.FromDecimal(shippingAmount);
         order.ShippingCharge = shippingCharge;
 
         order.GrandTotal = itemsSubtotal - discount + totalTax + shippingCharge;
@@ -549,6 +559,17 @@ public class OrderService : IOrderService
             }
         }
 
+        // Reward points: earn floor(Total / 100) once, when the order is delivered
+        if (request.NewStatus == OrderStatus.Delivered && !order.RewardPointsAwarded)
+        {
+            var earnedPoints = (int)Math.Floor(order.GrandTotal.ToDecimal() / 100m);
+            if (earnedPoints > 0 && order.Customer != null)
+            {
+                order.Customer.RewardPoints += earnedPoints;
+            }
+            order.RewardPointsAwarded = true;
+        }
+
         await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
         await _auditLog.LogAsync(
@@ -699,6 +720,8 @@ public class OrderService : IOrderService
 
         if (order == null) return null;
 
+        var (etaMin, etaMax) = GetDeliveryEta(order.DeliveryMethod);
+
         return new OrderTrackingDto
         {
             OrderNumber = order.OrderNumber,
@@ -708,7 +731,10 @@ public class OrderService : IOrderService
             UtrNumber = order.UtrNumber,
             PaymentScreenshotUrl = order.PaymentScreenshotUrl,
             PlacedAtUtc = order.PlacedAtUtc,
-            EstimatedDeliveryUtc = order.PlacedAtUtc.AddDays(3),
+            EstimatedDeliveryUtc = order.PlacedAtUtc.AddDays(etaMax),
+            DeliveryMethod = order.DeliveryMethod,
+            ExpectedDeliveryFrom = order.PlacedAtUtc.AddDays(etaMin),
+            ExpectedDeliveryTo = order.PlacedAtUtc.AddDays(etaMax),
             TrackingNumber = order.TrackingNumber,
             DeliveryAddressSummary = order.ShippingAddress.ToSingleLine(),
             Timeline = order.StatusHistories.OrderBy(h => h.ChangedAtUtc).Select(h => new OrderStatusHistoryDto
@@ -747,7 +773,7 @@ public class OrderService : IOrderService
             ?? throw new ResourceNotFoundException(nameof(Order), orderId);
 
         order.UtrNumber = request.UtrNumber.Trim();
-        order.PaymentScreenshotUrl = request.PaymentScreenshotUrl ?? request.PaymentScreenshotBase64;
+        order.PaymentScreenshotUrl = request.PaymentScreenshotUrl ?? request.PaymentScreenshotBase64 ?? request.ScreenshotBase64;
         order.PaymentSubmittedAtUtc = DateTime.UtcNow;
         order.PaymentVerificationNotes = request.Notes;
 
@@ -1089,8 +1115,80 @@ public class OrderService : IOrderService
             ?? throw new InvalidOperationException("Failed to retrieve updated order");
     }
 
+    private const string DeliveryMethodStandard = "standard";
+    private const string DeliveryMethodExpress = "express";
+
+    private sealed record DeliverySettings(decimal StandardCharge, decimal ExpressCharge, decimal FreeShippingThreshold);
+
+    private static string NormalizeDeliveryMethod(string? deliveryMethod) =>
+        string.Equals(deliveryMethod?.Trim(), DeliveryMethodExpress, StringComparison.OrdinalIgnoreCase)
+            ? DeliveryMethodExpress
+            : DeliveryMethodStandard;
+
+    private static (int EtaMinDays, int EtaMaxDays) GetDeliveryEta(string? deliveryMethod) =>
+        string.Equals(deliveryMethod?.Trim(), DeliveryMethodExpress, StringComparison.OrdinalIgnoreCase) ? (1, 2) : (3, 5);
+
+    private async Task<DeliverySettings> GetDeliverySettingsAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _context.SystemSettings
+            .AsNoTracking()
+            .Where(s => (s.Key == "Delivery.StandardCharge" || s.Key == "Delivery.ExpressCharge" || s.Key == "Shipping.FreeShippingThreshold") && !s.IsDeleted)
+            .ToDictionaryAsync(s => s.Key, s => s.Value, cancellationToken);
+
+        decimal Parse(string key, decimal fallback) =>
+            settings.TryGetValue(key, out var raw)
+            && decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+                ? value
+                : fallback;
+
+        return new DeliverySettings(
+            Parse("Delivery.StandardCharge", 40m),
+            Parse("Delivery.ExpressCharge", 90m),
+            Parse("Shipping.FreeShippingThreshold", 3000m));
+    }
+
+    public async Task<List<DeliveryOptionDto>> GetDeliveryOptionsAsync(decimal subtotal, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetDeliverySettingsAsync(cancellationToken);
+        var standardCharge = subtotal >= settings.FreeShippingThreshold ? 0m : settings.StandardCharge;
+
+        return new List<DeliveryOptionDto>
+        {
+            new()
+            {
+                Code = DeliveryMethodStandard,
+                Name = "Standard Delivery (3-5 Days)",
+                Charge = standardCharge,
+                EtaMinDays = 3,
+                EtaMaxDays = 5
+            },
+            new()
+            {
+                Code = DeliveryMethodExpress,
+                Name = "Express Delivery (1-2 Days)",
+                Charge = settings.ExpressCharge,
+                EtaMinDays = 1,
+                EtaMaxDays = 2
+            }
+        };
+    }
+
+    private async Task<Customer?> ResolveCurrentCustomerAsync(CancellationToken cancellationToken)
+    {
+        var userId = _currentUser.UserId;
+        var email = _currentUser.Email;
+        if (string.IsNullOrWhiteSpace(userId) && string.IsNullOrWhiteSpace(email)) return null;
+
+        return await _context.Customers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c =>
+                (userId != null && c.UserId == userId) ||
+                (email != null && c.Email.ToLower() == email.ToLower()), cancellationToken);
+    }
+
     private static OrderDto MapToOrderDto(Order o)
     {
+        var (etaMin, etaMax) = GetDeliveryEta(o.DeliveryMethod);
         return new OrderDto
         {
             Id = o.Id,
@@ -1112,6 +1210,9 @@ public class OrderService : IOrderService
             Notes = o.Notes,
             TrackingNumber = o.TrackingNumber,
             PlacedAtUtc = o.PlacedAtUtc,
+            DeliveryMethod = o.DeliveryMethod,
+            ExpectedDeliveryFrom = o.PlacedAtUtc.AddDays(etaMin),
+            ExpectedDeliveryTo = o.PlacedAtUtc.AddDays(etaMax),
             UtrNumber = o.UtrNumber,
             PaymentScreenshotUrl = o.PaymentScreenshotUrl,
             PaymentSubmittedAtUtc = o.PaymentSubmittedAtUtc,
@@ -1167,13 +1268,25 @@ public class OrderService : IOrderService
         if (order.OrderStatus is not (OrderStatus.Delivered or OrderStatus.Shipped or OrderStatus.Returned))
             throw new DomainException($"Cannot request a return for an order with status '{order.OrderStatus}'. Returns are only permitted for shipped or delivered orders.");
 
+        // IDOR guard: customers may only request returns for their own orders
+        if (string.Equals(_currentUser.Role, "Customer", StringComparison.OrdinalIgnoreCase))
+        {
+            var currentCustomer = await ResolveCurrentCustomerAsync(cancellationToken);
+            if (currentCustomer == null || order.CustomerId != currentCustomer.Id)
+                throw new DomainException("You can only request returns for your own orders.");
+        }
+
+        var reason = string.IsNullOrWhiteSpace(request.Comments)
+            ? request.Reason
+            : $"{request.Reason} — {request.Comments!.Trim()}";
+
         var returnNumber = await _numberGenerator.GenerateReturnNumberAsync(cancellationToken);
         var returnOrder = new ReturnOrder
         {
             ReturnNumber = returnNumber,
             OrderId = order.Id,
             CustomerId = order.CustomerId,
-            Reason = request.Reason,
+            Reason = reason,
             Status = "Requested",
             RequestedAtUtc = DateTime.UtcNow
         };
@@ -1181,9 +1294,12 @@ public class OrderService : IOrderService
         decimal expectedRefund = 0;
         foreach (var reqItem in request.Items)
         {
-            var orderItem = order.Items.FirstOrDefault(i => i.ProductId == reqItem.ProductId);
+            // Items may be addressed either by OrderItemId (preferred by the storefront) or by ProductId (back-compat).
+            var orderItem = reqItem.OrderItemId.HasValue
+                ? order.Items.FirstOrDefault(i => i.Id == reqItem.OrderItemId.Value)
+                : order.Items.FirstOrDefault(i => i.ProductId == reqItem.ProductId);
             if (orderItem == null)
-                throw new DomainException($"Product {reqItem.ProductId} was not found in Order #{order.OrderNumber}.");
+                throw new DomainException($"Item {(reqItem.OrderItemId.HasValue ? reqItem.OrderItemId.Value : reqItem.ProductId)} was not found in Order #{order.OrderNumber}.");
 
             if (reqItem.Quantity <= 0 || reqItem.Quantity > orderItem.Quantity)
                 throw new DomainException($"Invalid return quantity {reqItem.Quantity} for product '{orderItem.ProductNameSnapshot}'. Maximum allowed is {orderItem.Quantity}.");
@@ -1191,7 +1307,7 @@ public class OrderService : IOrderService
             var returnItem = new ReturnOrderItem
             {
                 ReturnOrderId = returnOrder.Id,
-                ProductId = reqItem.ProductId,
+                ProductId = orderItem.ProductId,
                 Quantity = reqItem.Quantity,
                 UnitPrice = orderItem.UnitPrice,
                 ConditionNotes = reqItem.Reason
@@ -1508,5 +1624,141 @@ public class OrderService : IOrderService
                 ConditionNotes = i.ConditionNotes
             }).ToList()
         };
+    }
+
+    public async Task<ReturnOrderDto> RejectReturnOrderAsync(Guid returnId, RejectReturnOrderRequest request, CancellationToken cancellationToken = default)
+    {
+        var returnOrder = await _context.ReturnOrders
+            .Include(r => r.Order)
+            .Include(r => r.Customer)
+            .FirstOrDefaultAsync(r => r.Id == returnId && !r.IsDeleted, cancellationToken)
+            ?? throw new ResourceNotFoundException(nameof(ReturnOrder), returnId);
+
+        if (returnOrder.Status is not ("Requested" or "Approved" or "Received"))
+            throw new DomainException($"Cannot reject return with status '{returnOrder.Status}'. Only 'Requested', 'Approved' or 'Received' returns can be rejected.");
+
+        var oldStatus = returnOrder.Status;
+        returnOrder.Status = "Rejected";
+        if (!string.IsNullOrWhiteSpace(request.Reason))
+        {
+            returnOrder.InspectionNotes = string.IsNullOrWhiteSpace(returnOrder.InspectionNotes)
+                ? $"Rejected: {request.Reason}"
+                : $"{returnOrder.InspectionNotes}; Rejected: {request.Reason}";
+        }
+        returnOrder.UpdatedAtUtc = DateTime.UtcNow;
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+
+        await _auditLog.LogAsync(
+            AuditAction.ReturnRejected,
+            "Returns",
+            nameof(ReturnOrder),
+            returnOrder.Id.ToString(),
+            returnOrder.ReturnNumber,
+            before: new { Status = oldStatus },
+            after: new { returnOrder.ReturnNumber, returnOrder.Status, Reason = request.Reason },
+            cancellationToken: cancellationToken);
+
+        await _outbox.EnqueueAsync("ReturnRejected", new
+        {
+            ReturnId = returnOrder.Id,
+            returnOrder.ReturnNumber,
+            Reason = request.Reason,
+            CustomerEmail = returnOrder.Customer?.Email
+        }, cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return (await GetReturnOrderByIdAsync(returnOrder.Id, cancellationToken))!;
+    }
+
+    public async Task<List<CustomerReturnDto>> GetMyReturnsAsync(CancellationToken cancellationToken = default)
+    {
+        var customer = await ResolveCurrentCustomerAsync(cancellationToken);
+        if (customer == null)
+        {
+            return new List<CustomerReturnDto>();
+        }
+
+        var returns = await _context.ReturnOrders
+            .AsNoTracking()
+            .Include(r => r.Order)
+            .Include(r => r.Items)
+                .ThenInclude(i => i.Product)
+            .Where(r => r.CustomerId == customer.Id && !r.IsDeleted)
+            .OrderByDescending(r => r.RequestedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        if (returns.Count == 0)
+        {
+            return new List<CustomerReturnDto>();
+        }
+
+        var orderIds = returns.Select(r => r.OrderId).Distinct().ToList();
+        var refundsByOrder = (await _context.Refunds
+                .AsNoTracking()
+                .Where(f => orderIds.Contains(f.OrderId) && !f.IsDeleted)
+                .ToListAsync(cancellationToken))
+            .GroupBy(f => f.OrderId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.CreatedAtUtc).First());
+
+        return returns.Select(r =>
+        {
+            refundsByOrder.TryGetValue(r.OrderId, out var refund);
+            return new CustomerReturnDto
+            {
+                Id = r.Id,
+                ReturnNumber = r.ReturnNumber,
+                OrderId = r.OrderId,
+                OrderNumber = r.Order?.OrderNumber ?? string.Empty,
+                Status = r.Status,
+                Reason = r.Reason,
+                CreatedAt = r.RequestedAtUtc,
+                Items = r.Items.Select(i => new CustomerReturnItemDto
+                {
+                    ProductName = i.Product?.Name ?? "Product",
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice.ToDecimal()
+                }).ToList(),
+                Refund = refund == null ? null : new CustomerReturnRefundDto
+                {
+                    RefundNumber = refund.RefundNumber,
+                    Status = refund.Status,
+                    Amount = refund.Amount.ToDecimal(),
+                    Method = refund.Method.ToString(),
+                    ProcessedAt = refund.ProcessedAtUtc
+                },
+                Timeline = BuildReturnTimeline(r, refund)
+            };
+        }).ToList();
+    }
+
+    private static List<CustomerReturnTimelineEntryDto> BuildReturnTimeline(ReturnOrder r, Refund? refund)
+    {
+        var timeline = new List<CustomerReturnTimelineEntryDto>
+        {
+            new() { Status = "Requested", Date = r.RequestedAtUtc, Completed = true }
+        };
+
+        if (string.Equals(r.Status, "Rejected", StringComparison.OrdinalIgnoreCase))
+        {
+            timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Rejected", Date = r.UpdatedAtUtc, Completed = true });
+            return timeline;
+        }
+
+        static bool StatusIn(string status, params string[] values) =>
+            values.Contains(status, StringComparer.OrdinalIgnoreCase);
+
+        var approved = StatusIn(r.Status, "Approved", "Received", "Inspected", "Refunded", "Closed");
+        var pickedUp = StatusIn(r.Status, "Received", "Inspected", "Refunded", "Closed");
+        var refundInitiated = refund != null || StatusIn(r.Status, "Refunded", "Closed");
+        var refundCompleted = refund != null && string.Equals(refund.Status, "Completed", StringComparison.OrdinalIgnoreCase);
+
+        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Approved", Date = approved ? (r.UpdatedAtUtc ?? r.RequestedAtUtc) : null, Completed = approved });
+        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Product Picked Up", Date = pickedUp ? (r.InspectedAtUtc ?? r.UpdatedAtUtc) : null, Completed = pickedUp });
+        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Refund Initiated", Date = refund?.CreatedAtUtc, Completed = refundInitiated });
+        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Refund Completed", Date = refundCompleted ? refund!.ProcessedAtUtc : null, Completed = refundCompleted });
+        return timeline;
     }
 }

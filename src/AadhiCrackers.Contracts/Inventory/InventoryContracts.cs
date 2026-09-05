@@ -116,6 +116,10 @@ public class CreateSupplierRequest
     public bool IsActive { get; set; } = true;
 }
 
+public class UpdateSupplierRequest : CreateSupplierRequest
+{
+}
+
 public class PurchaseOrderItemDto
 {
     public Guid Id { get; set; }

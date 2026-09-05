@@ -46,6 +46,8 @@ public interface IApplicationDbContext
     DbSet<Quote> Quotes { get; }
     DbSet<QuoteItem> QuoteItems { get; }
     DbSet<HomepageBanner> HomepageBanners { get; }
+    DbSet<OtpVerification> OtpVerifications { get; }
+    DbSet<WishlistItem> WishlistItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
@@ -66,7 +68,9 @@ public interface ICurrentUserService
 public interface IIdentityService
 {
     Task<AuthResponse> AuthenticateAsync(LoginRequest request, CancellationToken cancellationToken = default);
+    Task<AuthResponse> AuthenticateWithFirebaseAsync(FirebaseLoginRequest request, CancellationToken cancellationToken = default);
     Task<AuthResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
+    Task<AuthResponse> CreateStaffUserAsync(CreateStaffUserRequest request, CancellationToken cancellationToken = default);
     Task<bool> ChangePasswordAsync(string userId, ChangePasswordRequest request, CancellationToken cancellationToken = default);
     Task<UserDto?> GetUserByIdAsync(string userId, CancellationToken cancellationToken = default);
     Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default);
@@ -74,6 +78,10 @@ public interface IIdentityService
     Task<bool> ToggleUserStatusAsync(string userId, bool isActive, CancellationToken cancellationToken = default);
     Task<List<LoginHistoryDto>> GetLoginHistoryAsync(CancellationToken cancellationToken = default);
     Task<List<RateLimitLogDto>> GetRateLimitLogsAsync(CancellationToken cancellationToken = default);
+
+    Task<string?> GeneratePasswordResetOtpAsync(string identifier, CancellationToken cancellationToken = default);
+    Task<string?> VerifyPasswordResetOtpAsync(string identifier, string otp, CancellationToken cancellationToken = default);
+    Task<bool> ResetPasswordWithTokenAsync(string resetToken, string newPassword, CancellationToken cancellationToken = default);
 }
 
 public interface IFileStorageService
@@ -90,6 +98,7 @@ public interface INotificationService
     Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default);
     Task SendReturnStatusUpdatedAsync(ReturnOrder returnOrder, CancellationToken cancellationToken = default);
     Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default);
+    Task SendPasswordResetOtpAsync(string recipient, string otpCode, CancellationToken cancellationToken = default);
 }
 
 public interface IOutboxService

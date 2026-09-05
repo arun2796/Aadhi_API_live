@@ -9,8 +9,17 @@ public class CustomerAddress : BaseEntity<Guid>
     public Guid CustomerId { get; set; }
     public Customer Customer { get; set; } = null!;
     public AddressType AddressType { get; set; } = AddressType.Both;
+    public string? Label { get; set; } // Home | Office | Other
     public Address Address { get; set; } = new();
     public bool IsDefault { get; set; }
+}
+
+public class WishlistItem : BaseEntity<Guid>
+{
+    public Guid CustomerId { get; set; }
+    public Customer Customer { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
 }
 
 public class Customer : AggregateRoot<Guid>
@@ -23,6 +32,7 @@ public class Customer : AggregateRoot<Guid>
     public string Phone { get; set; } = string.Empty;
     public DateOnly? DateOfBirth { get; set; }
     public bool IsActive { get; set; } = true;
+    public int RewardPoints { get; set; }
 
     public string FullName => $"{FirstName} {LastName}".Trim();
 

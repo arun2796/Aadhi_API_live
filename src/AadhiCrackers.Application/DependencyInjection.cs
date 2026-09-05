@@ -25,6 +25,8 @@ public static class DependencyInjection
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IBannerService, BannerService>();
         services.AddScoped<ISystemHealthService, SystemHealthService>();
+        services.AddScoped<IWishlistService, WishlistService>();
+        services.AddScoped<IAddressService, AddressService>();
 
         return services;
     }

@@ -71,6 +71,15 @@ public class CustomersController : ControllerBase
         return Ok(ApiResponse<List<OrderDto>>.Ok(orders, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpPost]
+    [Authorize(Policy = "RequireStaff")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<CustomerDto>>> CreateCustomer([FromBody] CreateCustomerRequest request, CancellationToken cancellationToken)
+    {
+        var customer = await _customerService.CreateCustomerAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetCustomerById), new { id = customer.Id }, ApiResponse<CustomerDto>.Ok(customer, "Customer created successfully", _currentUser.CorrelationId));
+    }
+
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "RequireStaff")]
     public async Task<ActionResult<ApiResponse<CustomerDto>>> UpdateCustomer(Guid id, [FromBody] UpdateCustomerRequest request, CancellationToken cancellationToken)

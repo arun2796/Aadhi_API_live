@@ -58,6 +58,8 @@ public class Order : AggregateRoot<Guid>
     public string? Notes { get; set; }
     public string? TrackingNumber { get; set; }
     public DateTime PlacedAtUtc { get; set; } = DateTime.UtcNow;
+    public string DeliveryMethod { get; set; } = "standard"; // standard | express
+    public bool RewardPointsAwarded { get; set; }
 
     // UPI QR Code Payment Proof & Verification
     public string? UtrNumber { get; set; }

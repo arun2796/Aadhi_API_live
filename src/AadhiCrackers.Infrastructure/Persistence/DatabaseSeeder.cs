@@ -206,7 +206,7 @@ public static class DatabaseSeeder
                     Name = "Combo Offers",
                     Slug = "combo-offers",
                     Description = "Mega savings festive value combo packs.",
-                    ImageUrl = "https://images.unsplash.com/photo-1531259683007-016a7b628fc3?w=600&auto=format&fit=crop&q=80",
+                    ImageUrl = "https://images.unsplash.com/photo-1467810563316-b5476525c0f9?w=600&auto=format&fit=crop&q=80",
                     DisplayOrder = 2,
                     IsActive = true
                 };
@@ -215,7 +215,7 @@ public static class DatabaseSeeder
                     Name = "Sparklers",
                     Slug = "sparklers",
                     Description = "Electric, gold, and color sparklers with low smoke and longer burning time.",
-                    ImageUrl = "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=600&auto=format&fit=crop&q=80",
+                    ImageUrl = "https://images.unsplash.com/photo-1498931299472-f7a63a5a1cfa?w=600&auto=format&fit=crop&q=80",
                     DisplayOrder = 3,
                     IsActive = true
                 };
@@ -242,7 +242,7 @@ public static class DatabaseSeeder
                     Name = "Rockets",
                     Slug = "rockets",
                     Description = "High altitude whistling and bursting rockets.",
-                    ImageUrl = "https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=600&auto=format&fit=crop&q=80",
+                    ImageUrl = "https://images.unsplash.com/photo-1514565131-fce0801e5785?w=600&auto=format&fit=crop&q=80",
                     DisplayOrder = 6,
                     IsActive = true
                 };
@@ -595,7 +595,7 @@ public static class DatabaseSeeder
                 var boxImages = new[]
                 {
                     "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=700&auto=format&fit=crop&q=80",
-                    "https://images.unsplash.com/photo-1531259683007-016a7b628fc3?w=700&auto=format&fit=crop&q=80",
+                    "https://images.unsplash.com/photo-1467810563316-b5476525c0f9?w=700&auto=format&fit=crop&q=80",
                     "https://images.unsplash.com/photo-1498931299472-f7a63a5a1cfa?w=700&auto=format&fit=crop&q=80"
                 };
 
@@ -805,6 +805,32 @@ public static class DatabaseSeeder
                     new SystemSetting { Key = "RateLimiting.Enabled", Value = "true", Group = "Security", Description = "Enable API Rate Limiting" }
                 );
 
+                await context.SaveChangesAsync();
+            }
+
+            // 12. Ensure delivery/shipping settings exist (idempotent — safe on existing databases)
+            var deliverySettingDefaults = new SystemSetting[]
+            {
+                new() { Key = "Delivery.StandardCharge", Value = "40.00", Group = "Shipping", Description = "Standard delivery charge (3-5 days)" },
+                new() { Key = "Delivery.ExpressCharge", Value = "90.00", Group = "Shipping", Description = "Express delivery charge (1-2 days); never free" },
+                new() { Key = "Shipping.FreeShippingThreshold", Value = "3000.00", Group = "Shipping", Description = "Free shipping order minimum (standard delivery only)" }
+            };
+
+            var addedDeliverySettings = false;
+            foreach (var setting in deliverySettingDefaults)
+            {
+                var exists = await context.SystemSettings
+                    .IgnoreQueryFilters()
+                    .AnyAsync(s => s.Key == setting.Key);
+                if (!exists)
+                {
+                    context.SystemSettings.Add(setting);
+                    addedDeliverySettings = true;
+                }
+            }
+
+            if (addedDeliverySettings)
+            {
                 await context.SaveChangesAsync();
             }
 

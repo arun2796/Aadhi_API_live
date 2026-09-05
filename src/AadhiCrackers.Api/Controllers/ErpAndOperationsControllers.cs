@@ -172,6 +172,53 @@ public class OrdersController : ControllerBase
 
         return Ok(ApiResponse<OrderTrackingDto>.Ok(tracking, correlationId: _currentUser.CorrelationId));
     }
+
+    [HttpGet("delivery-options")]
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimitingPolicies.PublicGeneral)]
+    public async Task<ActionResult<ApiResponse<List<DeliveryOptionDto>>>> GetDeliveryOptions([FromQuery] decimal subtotal = 0, CancellationToken cancellationToken = default)
+    {
+        var options = await _orderService.GetDeliveryOptionsAsync(subtotal, cancellationToken);
+        return Ok(ApiResponse<List<DeliveryOptionDto>>.Ok(options, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/payment-proof")]
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimitingPolicies.PublicGeneral)]
+    public async Task<ActionResult<ApiResponse<OrderDto>>> SubmitPaymentProof(Guid id, [FromBody] SubmitPaymentProofRequest request, CancellationToken cancellationToken)
+    {
+        var existing = await _orderService.GetOrderByIdAsync(id, cancellationToken);
+        if (existing == null)
+            return NotFound(ApiResponse<OrderDto>.Fail($"Order with ID '{id}' not found", _currentUser.CorrelationId));
+
+        if (_currentUser.IsAuthenticated)
+        {
+            // IDOR guard: customers may only submit proof for their own orders
+            if (_currentUser.Role == "Customer")
+            {
+                var customer = !string.IsNullOrWhiteSpace(_currentUser.UserId)
+                    ? await _customerService.GetCustomerByUserIdAsync(_currentUser.UserId, cancellationToken)
+                    : (!string.IsNullOrWhiteSpace(_currentUser.Email) ? await _customerService.GetCustomerByEmailAsync(_currentUser.Email, cancellationToken) : null);
+
+                if (customer == null || existing.CustomerId != customer.Id)
+                {
+                    return Forbid();
+                }
+            }
+        }
+        else
+        {
+            // Anonymous submissions must present the matching order number
+            if (string.IsNullOrWhiteSpace(request.OrderNumber) ||
+                !string.Equals(request.OrderNumber.Trim(), existing.OrderNumber, StringComparison.OrdinalIgnoreCase))
+            {
+                return Unauthorized(ApiResponse<OrderDto>.Fail("Provide the matching order number to submit payment proof for this order.", _currentUser.CorrelationId));
+            }
+        }
+
+        var order = await _orderService.SubmitPaymentProofAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<OrderDto>.Ok(order, "Payment proof submitted successfully. Our team will verify it shortly.", _currentUser.CorrelationId));
+    }
 }
 
 [ApiController]
@@ -294,6 +341,38 @@ public class PurchasesController : ControllerBase
     {
         var supplier = await _purchaseService.CreateSupplierAsync(request, cancellationToken);
         return Ok(ApiResponse<SupplierDto>.Ok(supplier, "Supplier created successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpGet("suppliers/{id:guid}")]
+    [Authorize(Policy = "RequirePurchaseManager")]
+    public async Task<ActionResult<ApiResponse<SupplierDto>>> GetSupplierById(Guid id, CancellationToken cancellationToken)
+    {
+        var supplier = await _purchaseService.GetSupplierByIdAsync(id, cancellationToken);
+        if (supplier == null)
+            return NotFound(ApiResponse<SupplierDto>.Fail($"Supplier with ID '{id}' not found", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<SupplierDto>.Ok(supplier, correlationId: _currentUser.CorrelationId));
+    }
+
+    [HttpPut("suppliers/{id:guid}")]
+    [Authorize(Policy = "RequirePurchaseManager")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<SupplierDto>>> UpdateSupplier(Guid id, [FromBody] UpdateSupplierRequest request, CancellationToken cancellationToken)
+    {
+        var supplier = await _purchaseService.UpdateSupplierAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<SupplierDto>.Ok(supplier, "Supplier updated successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpDelete("suppliers/{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteSupplier(Guid id, CancellationToken cancellationToken)
+    {
+        var success = await _purchaseService.DeleteSupplierAsync(id, cancellationToken);
+        if (!success)
+            return NotFound(ApiResponse<bool>.Fail($"Supplier with ID '{id}' not found", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<bool>.Ok(true, "Supplier deleted successfully", _currentUser.CorrelationId));
     }
 
     [HttpGet]
@@ -466,12 +545,22 @@ public class PaymentsController : ControllerBase
 public class ReturnsController : ControllerBase
 {
     private readonly IOrderService _orderService;
+    private readonly ICustomerService _customerService;
     private readonly ICurrentUserService _currentUser;
 
-    public ReturnsController(IOrderService orderService, ICurrentUserService currentUser)
+    public ReturnsController(IOrderService orderService, ICustomerService customerService, ICurrentUserService currentUser)
     {
         _orderService = orderService;
+        _customerService = customerService;
         _currentUser = currentUser;
+    }
+
+    [HttpGet("my")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<List<CustomerReturnDto>>>> GetMyReturns(CancellationToken cancellationToken)
+    {
+        var returns = await _orderService.GetMyReturnsAsync(cancellationToken);
+        return Ok(ApiResponse<List<CustomerReturnDto>>.Ok(returns, correlationId: _currentUser.CorrelationId));
     }
 
     [HttpGet]
@@ -494,6 +583,19 @@ public class ReturnsController : ControllerBase
         var returnOrder = await _orderService.GetReturnOrderByIdAsync(id, cancellationToken);
         if (returnOrder == null)
             return NotFound(ApiResponse<ReturnOrderDto>.Fail($"Return order with ID '{id}' not found", _currentUser.CorrelationId));
+
+        // Prevent IDOR: customers can only view their own returns
+        if (_currentUser.Role == "Customer")
+        {
+            var customer = !string.IsNullOrWhiteSpace(_currentUser.UserId)
+                ? await _customerService.GetCustomerByUserIdAsync(_currentUser.UserId, cancellationToken)
+                : (!string.IsNullOrWhiteSpace(_currentUser.Email) ? await _customerService.GetCustomerByEmailAsync(_currentUser.Email, cancellationToken) : null);
+
+            if (customer == null || returnOrder.CustomerId != customer.Id)
+            {
+                return Forbid();
+            }
+        }
 
         return Ok(ApiResponse<ReturnOrderDto>.Ok(returnOrder, correlationId: _currentUser.CorrelationId));
     }
@@ -532,6 +634,15 @@ public class ReturnsController : ControllerBase
     {
         var result = await _orderService.InspectReturnOrderAsync(id, request, cancellationToken);
         return Ok(ApiResponse<ReturnOrderDto>.Ok(result, "Return inspection completed and sellable items restocked", _currentUser.CorrelationId));
+    }
+
+    [HttpPost("{id:guid}/reject")]
+    [Authorize(Policy = "RequireStaff")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<ReturnOrderDto>>> RejectReturn(Guid id, [FromBody] RejectReturnOrderRequest? request, CancellationToken cancellationToken)
+    {
+        var result = await _orderService.RejectReturnOrderAsync(id, request ?? new RejectReturnOrderRequest(), cancellationToken);
+        return Ok(ApiResponse<ReturnOrderDto>.Ok(result, "Return request rejected", _currentUser.CorrelationId));
     }
 }
 

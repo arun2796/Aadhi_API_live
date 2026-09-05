@@ -33,6 +33,30 @@ public static class DatabaseInitializer
 
     private static async Task EnsureSchemaIntegrityAsync(AadhiDbContext context, CancellationToken cancellationToken)
     {
+        var integrityConnection = context.Database.GetDbConnection();
+        var shouldCloseIntegrityConnection = integrityConnection.State != ConnectionState.Open;
+        if (shouldCloseIntegrityConnection)
+        {
+            await integrityConnection.OpenAsync(cancellationToken);
+        }
+
+        try
+        {
+            // Fresh database (no user tables yet): skip legacy schema patching entirely and
+            // let EF migrations create the full schema from scratch.
+            if (!await HasUserTablesAsync(integrityConnection, cancellationToken))
+            {
+                return;
+            }
+        }
+        finally
+        {
+            if (shouldCloseIntegrityConnection)
+            {
+                await integrityConnection.CloseAsync();
+            }
+        }
+
         await context.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "ProductReviews" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_ProductReviews" PRIMARY KEY,
@@ -330,13 +354,16 @@ public static class DatabaseInitializer
             // Column migrations for Promotions
             await EnsureColumnAsync(connection, "Promotions", "RowVersion", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'", cancellationToken);
 
-            // Update NULL RowVersion values
-            await context.Database.ExecuteSqlRawAsync("""
-                UPDATE "Products" SET "RowVersion" = lower(hex(randomblob(16))) WHERE "RowVersion" IS NULL OR "RowVersion" = '' OR "RowVersion" = '00000000-0000-0000-0000-000000000000';
-                UPDATE "Orders" SET "RowVersion" = lower(hex(randomblob(16))) WHERE "RowVersion" IS NULL OR "RowVersion" = '' OR "RowVersion" = '00000000-0000-0000-0000-000000000000';
-                UPDATE "StockItems" SET "RowVersion" = lower(hex(randomblob(16))) WHERE "RowVersion" IS NULL OR "RowVersion" = '' OR "RowVersion" = '00000000-0000-0000-0000-000000000000';
-                UPDATE "Promotions" SET "RowVersion" = lower(hex(randomblob(16))) WHERE "RowVersion" IS NULL OR "RowVersion" = '' OR "RowVersion" = '00000000-0000-0000-0000-000000000000';
-            """, cancellationToken);
+            // Update NULL RowVersion values (only for tables that exist)
+            foreach (var rowVersionTable in new[] { "Products", "Orders", "StockItems", "Promotions" })
+            {
+                if (await TableExistsAsync(connection, rowVersionTable, cancellationToken))
+                {
+                    await context.Database.ExecuteSqlRawAsync(
+                        $"""UPDATE "{rowVersionTable}" SET "RowVersion" = lower(hex(randomblob(16))) WHERE "RowVersion" IS NULL OR "RowVersion" = '' OR "RowVersion" = '00000000-0000-0000-0000-000000000000';""",
+                        cancellationToken);
+                }
+            }
         }
         finally
         {
@@ -379,7 +406,8 @@ public static class DatabaseInitializer
                 var bannersMigration = context.Database.GetMigrations().FirstOrDefault(m => m.Contains("AddHomepageBanners"));
                 if (!string.IsNullOrWhiteSpace(bannersMigration) &&
                     await TableExistsAsync(connection, "ProductReviews", cancellationToken) &&
-                    await ColumnExistsAsync(connection, "ProductReviews", "OrderId", cancellationToken))
+                    await ColumnExistsAsync(connection, "ProductReviews", "OrderId", cancellationToken) &&
+                    !await MigrationHistoryRowExistsAsync(connection, bannersMigration, cancellationToken))
                 {
                     var insertScript = historyRepository.GetInsertScript(new HistoryRow(bannersMigration, "9.0.2"));
                     try
@@ -458,6 +486,11 @@ public static class DatabaseInitializer
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
                     }
+                    else if (migrationId.Contains("AddOtpWishlistRewardsAndDelivery") && await TableExistsAsync(connection, "OtpVerifications", cancellationToken))
+                    {
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
                 }
 
                 logger.LogWarning(
@@ -514,6 +547,24 @@ public static class DatabaseInitializer
         await using var command = connection.CreateCommand();
         command.CommandText = $"SELECT COUNT(1) FROM \"{tableName}\";";
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    private static async Task<bool> MigrationHistoryRowExistsAsync(
+        DbConnection connection,
+        string migrationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(1)
+            FROM "__EFMigrationsHistory"
+            WHERE "MigrationId" = $migrationId;
+            """;
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "$migrationId";
+        parameter.Value = migrationId;
+        command.Parameters.Add(parameter);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) > 0;
     }
 
     private static async Task<bool> ColumnExistsAsync(

@@ -23,7 +23,7 @@ public class CartDto
     public decimal Subtotal => Items.Sum(i => i.LineTotal);
     public decimal Discount { get; set; }
     public string? CouponCode { get; set; }
-    public decimal ShippingCharge => Subtotal >= 3000 ? 0 : (Items.Count > 0 ? 150 : 0);
+    public decimal ShippingCharge { get; set; } // computed server-side from SystemSettings (Delivery.* keys)
     public decimal GrandTotal => Math.Max(0, Subtotal - Discount + ShippingCharge);
 }
 
@@ -103,7 +103,15 @@ public class OrderDto
     public string? Notes { get; set; }
     public string? TrackingNumber { get; set; }
     public DateTime PlacedAtUtc { get; set; }
-    
+
+    // Delivery
+    public string DeliveryMethod { get; set; } = "standard";
+    public DateTime? ExpectedDeliveryFrom { get; set; }
+    public DateTime? ExpectedDeliveryTo { get; set; }
+
+    // Reward points earnable once delivered: floor(total / 100)
+    public int RewardPointsEarnable => (int)Math.Floor(GrandTotal / 100m);
+
     // UPI QR Code Verification Details
     public string? UtrNumber { get; set; }
     public string? PaymentScreenshotUrl { get; set; }
@@ -129,6 +137,7 @@ public class CreateOrderRequest
     public Address ShippingAddress { get; set; } = new();
     public Address? BillingAddress { get; set; }
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.UPI;
+    public string? DeliveryMethod { get; set; } // "standard" (default) | "express"
     public string? CouponCode { get; set; }
     public string? Notes { get; set; }
     
@@ -143,9 +152,13 @@ public class CreateOrderRequest
 public class SubmitPaymentProofRequest
 {
     public string UtrNumber { get; set; } = string.Empty;
+    public string? ScreenshotBase64 { get; set; }
     public string? PaymentScreenshotBase64 { get; set; }
     public string? PaymentScreenshotUrl { get; set; }
     public string? Notes { get; set; }
+
+    // Anonymous submissions must supply the matching order number (IDOR guard)
+    public string? OrderNumber { get; set; }
 }
 
 public class UpdateOrderStatusRequest
@@ -176,6 +189,9 @@ public class OrderTrackingDto
     public string? PaymentScreenshotUrl { get; set; }
     public DateTime PlacedAtUtc { get; set; }
     public DateTime? EstimatedDeliveryUtc { get; set; }
+    public string DeliveryMethod { get; set; } = "standard";
+    public DateTime? ExpectedDeliveryFrom { get; set; }
+    public DateTime? ExpectedDeliveryTo { get; set; }
     public string? TrackingNumber { get; set; }
     public string DeliveryAddressSummary { get; set; } = string.Empty;
     public List<OrderStatusHistoryDto> Timeline { get; set; } = new();
@@ -217,6 +233,7 @@ public class ReturnOrderDto
 public class CreateReturnOrderItemRequest
 {
     public Guid ProductId { get; set; }
+    public Guid? OrderItemId { get; set; } // alternative to ProductId — resolved to the order line
     public int Quantity { get; set; }
     public string? Reason { get; set; }
 }
@@ -225,6 +242,7 @@ public class CreateReturnOrderRequest
 {
     public Guid OrderId { get; set; }
     public string Reason { get; set; } = string.Empty;
+    public string? Comments { get; set; }
     public List<CreateReturnOrderItemRequest> Items { get; set; } = new();
 }
 
@@ -240,4 +258,57 @@ public class InspectReturnOrderRequest
 {
     public string? InspectionNotes { get; set; }
     public List<InspectReturnItemRequest> ItemInspections { get; set; } = new();
+}
+
+public class RejectReturnOrderRequest
+{
+    public string? Reason { get; set; }
+}
+
+public class DeliveryOptionDto
+{
+    public string Code { get; set; } = string.Empty; // standard | express
+    public string Name { get; set; } = string.Empty;
+    public decimal Charge { get; set; }
+    public int EtaMinDays { get; set; }
+    public int EtaMaxDays { get; set; }
+}
+
+// ---- Customer-facing return visibility (GET /returns/my) ----
+
+public class CustomerReturnItemDto
+{
+    public string ProductName { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+}
+
+public class CustomerReturnRefundDto
+{
+    public string RefundNumber { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string Method { get; set; } = string.Empty;
+    public DateTime? ProcessedAt { get; set; }
+}
+
+public class CustomerReturnTimelineEntryDto
+{
+    public string Status { get; set; } = string.Empty;
+    public DateTime? Date { get; set; }
+    public bool Completed { get; set; }
+}
+
+public class CustomerReturnDto
+{
+    public Guid Id { get; set; }
+    public string ReturnNumber { get; set; } = string.Empty;
+    public Guid OrderId { get; set; }
+    public string OrderNumber { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public List<CustomerReturnItemDto> Items { get; set; } = new();
+    public CustomerReturnRefundDto? Refund { get; set; }
+    public List<CustomerReturnTimelineEntryDto> Timeline { get; set; } = new();
 }
