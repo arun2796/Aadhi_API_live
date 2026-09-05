@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -7,6 +8,8 @@ using AadhiCrackers.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AadhiCrackers.Infrastructure.Identity;
@@ -113,6 +116,20 @@ public class IdentityService : IIdentityService
         };
     }
 
+    // Firebase ID-token verification: Google's OIDC metadata (issuer + JWKS signing keys) is
+    // fetched once per project and cached process-wide; ConfigurationManager refreshes it
+    // automatically (and on demand via RequestRefresh when a key rotates).
+    private static readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _firebaseConfigManagers = new();
+
+    private static ConfigurationManager<OpenIdConnectConfiguration> GetFirebaseConfigurationManager(string projectId)
+    {
+        return _firebaseConfigManagers.GetOrAdd(projectId, pid =>
+            new ConfigurationManager<OpenIdConnectConfiguration>(
+                $"https://securetoken.google.com/{pid}/.well-known/openid-configuration",
+                new OpenIdConnectConfigurationRetriever(),
+                new HttpDocumentRetriever { RequireHttps = true }));
+    }
+
     public async Task<AuthResponse> AuthenticateWithFirebaseAsync(FirebaseLoginRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.IdToken))
@@ -120,44 +137,101 @@ public class IdentityService : IIdentityService
             return new AuthResponse { Success = false, Message = "Firebase token is required." };
         }
 
-        string email = request.Email?.Trim() ?? string.Empty;
-        string name = request.DisplayName?.Trim() ?? string.Empty;
-        string phone = request.PhoneNumber?.Trim() ?? string.Empty;
-        string firebaseUid = string.Empty;
+        var projectId = _configuration["Firebase:ProjectId"];
+        if (string.IsNullOrWhiteSpace(projectId))
+        {
+            return new AuthResponse { Success = false, Message = "Firebase sign-in is not configured on the server." };
+        }
 
-        // Try reading claims from JWT token
+        var configManager = GetFirebaseConfigurationManager(projectId);
+
+        OpenIdConnectConfiguration oidcConfig;
         try
         {
-            var handler = new JwtSecurityTokenHandler();
-            if (handler.CanReadToken(request.IdToken))
-            {
-                var jwt = handler.ReadJwtToken(request.IdToken);
-
-                var emailClaim = jwt.Claims.FirstOrDefault(c => c.Type == "email" || c.Type == ClaimTypes.Email)?.Value;
-                if (!string.IsNullOrWhiteSpace(emailClaim)) email = emailClaim;
-
-                var nameClaim = jwt.Claims.FirstOrDefault(c => c.Type == "name" || c.Type == ClaimTypes.Name)?.Value;
-                if (!string.IsNullOrWhiteSpace(nameClaim)) name = nameClaim;
-
-                var phoneClaim = jwt.Claims.FirstOrDefault(c => c.Type == "phone_number" || c.Type == "phone" || c.Type == ClaimTypes.MobilePhone)?.Value;
-                if (!string.IsNullOrWhiteSpace(phoneClaim)) phone = phoneClaim;
-
-                var subClaim = jwt.Claims.FirstOrDefault(c => c.Type == "sub" || c.Type == "user_id" || c.Type == ClaimTypes.NameIdentifier)?.Value;
-                if (!string.IsNullOrWhiteSpace(subClaim)) firebaseUid = subClaim;
-            }
+            oidcConfig = await configManager.GetConfigurationAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
-            // fallback to request-provided fields
+            return new AuthResponse { Success = false, Message = "Could not reach Firebase verification service. Please try again later." };
+        }
+
+        var validationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = $"https://securetoken.google.com/{projectId}",
+            ValidateAudience = true,
+            ValidAudience = projectId,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKeys = oidcConfig.SigningKeys,
+            RequireSignedTokens = true,
+            RequireExpirationTime = true,
+            ValidateLifetime = true,
+            ValidAlgorithms = new[] { SecurityAlgorithms.RsaSha256 },
+            ClockSkew = TimeSpan.FromMinutes(5)
+        };
+
+        ClaimsPrincipal principal;
+        try
+        {
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+            try
+            {
+                principal = handler.ValidateToken(request.IdToken, validationParameters, out _);
+            }
+            catch (SecurityTokenSignatureKeyNotFoundException)
+            {
+                // Google rotates its signing keys; force a metadata refresh and retry once.
+                configManager.RequestRefresh();
+                oidcConfig = await configManager.GetConfigurationAsync(cancellationToken);
+                validationParameters.IssuerSigningKeys = oidcConfig.SigningKeys;
+                principal = handler.ValidateToken(request.IdToken, validationParameters, out _);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Bad signature, wrong issuer/audience, expired, malformed, unreachable metadata on
+            // the retry — the token is not trusted. NEVER fall back to request-provided identity.
+            return new AuthResponse { Success = false, Message = "Invalid or expired Firebase credentials." };
+        }
+
+        // Identity comes ONLY from the cryptographically verified token's claims.
+        string email = principal.FindFirst("email")?.Value?.Trim() ?? string.Empty;
+        string phone = principal.FindFirst("phone_number")?.Value?.Trim() ?? string.Empty;
+        string firebaseUid = principal.FindFirst("sub")?.Value ?? string.Empty;
+        string name = principal.FindFirst("name")?.Value?.Trim() ?? string.Empty;
+
+        // DisplayName from the request is cosmetic only (used when the token carries no name);
+        // it never participates in identity resolution.
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = request.DisplayName?.Trim() ?? string.Empty;
         }
 
         if (string.IsNullOrWhiteSpace(email) && string.IsNullOrWhiteSpace(phone))
         {
-            return new AuthResponse { Success = false, Message = "Unable to extract email or phone from Firebase credentials." };
+            return new AuthResponse { Success = false, Message = "Firebase credentials did not include an email or phone number." };
         }
 
         var lookupKey = !string.IsNullOrWhiteSpace(email) ? email : phone;
         var user = await ResolveUserByIdentifierAsync(lookupKey, cancellationToken);
+
+        if (user != null)
+        {
+            // Social login must never open a path into staff/admin accounts.
+            var existingRoles = await _userManager.GetRolesAsync(user);
+            if (existingRoles.Count > 0 && !existingRoles.Contains(AppRoles.Customer))
+            {
+                return new AuthResponse { Success = false, Message = "Please sign in with your email and password." };
+            }
+        }
 
         if (user == null)
         {

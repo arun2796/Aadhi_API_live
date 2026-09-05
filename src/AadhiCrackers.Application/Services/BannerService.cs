@@ -1,3 +1,4 @@
+using AadhiCrackers.Application.Common;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Contracts.Marketing;
 using AadhiCrackers.Domain.Entities;
@@ -107,8 +108,8 @@ public class BannerService : IBannerService
         {
             Title = request.Title.Trim(),
             Subtitle = request.Subtitle?.Trim(),
-            ImageUrl = request.ImageUrl.Trim(),
-            MobileImageUrl = request.MobileImageUrl?.Trim(),
+            ImageUrl = ImageUrlNormalizer.Normalize(request.ImageUrl) ?? request.ImageUrl.Trim(),
+            MobileImageUrl = ImageUrlNormalizer.Normalize(request.MobileImageUrl),
             TargetUrl = string.IsNullOrWhiteSpace(request.TargetUrl) ? "/products" : request.TargetUrl.Trim(),
             CtaText = string.IsNullOrWhiteSpace(request.CtaText) ? "Shop Now" : request.CtaText.Trim(),
             DisplayOrder = request.DisplayOrder,
@@ -165,8 +166,8 @@ public class BannerService : IBannerService
         var oldTitle = banner.Title;
         banner.Title = request.Title.Trim();
         banner.Subtitle = request.Subtitle?.Trim();
-        banner.ImageUrl = request.ImageUrl.Trim();
-        banner.MobileImageUrl = request.MobileImageUrl?.Trim();
+        banner.ImageUrl = ImageUrlNormalizer.Normalize(request.ImageUrl) ?? request.ImageUrl.Trim();
+        banner.MobileImageUrl = ImageUrlNormalizer.Normalize(request.MobileImageUrl);
         banner.TargetUrl = string.IsNullOrWhiteSpace(request.TargetUrl) ? "/products" : request.TargetUrl.Trim();
         banner.CtaText = string.IsNullOrWhiteSpace(request.CtaText) ? "Shop Now" : request.CtaText.Trim();
         banner.DisplayOrder = request.DisplayOrder;

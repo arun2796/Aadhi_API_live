@@ -1,3 +1,4 @@
+using AadhiCrackers.Application.Common;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Contracts.Catalog;
 using AadhiCrackers.Contracts.Common;
@@ -122,13 +123,18 @@ public class CatalogService : ICatalogService
         }
 
         var slug = GenerateSlug(request.Name);
+        var slugTaken = await _context.Categories
+            .AnyAsync(c => c.Slug.ToLower() == slug.ToLower() && !c.IsDeleted, cancellationToken);
+        if (slugTaken)
+            throw new DomainException($"A category named '{request.Name.Trim()}' already exists. Please choose a different name.");
+
         var category = new Category
         {
             Name = request.Name.Trim(),
             Slug = slug,
             Description = request.Description,
             ParentCategoryId = request.ParentCategoryId,
-            ImageUrl = request.ImageUrl,
+            ImageUrl = ImageUrlNormalizer.Normalize(request.ImageUrl),
             DisplayOrder = request.DisplayOrder,
             IsActive = request.IsActive,
             SeoTitle = request.SeoTitle,
@@ -187,11 +193,17 @@ public class CatalogService : ICatalogService
 
         var before = new { category.Name, category.Slug, category.Description, category.IsActive };
 
+        var updatedSlug = GenerateSlug(request.Name);
+        var updatedSlugTaken = await _context.Categories
+            .AnyAsync(c => c.Id != category.Id && c.Slug.ToLower() == updatedSlug.ToLower() && !c.IsDeleted, cancellationToken);
+        if (updatedSlugTaken)
+            throw new DomainException($"Another category named '{request.Name.Trim()}' already exists. Please choose a different name.");
+
         category.Name = request.Name.Trim();
-        category.Slug = GenerateSlug(request.Name);
+        category.Slug = updatedSlug;
         category.Description = request.Description;
         category.ParentCategoryId = request.ParentCategoryId;
-        category.ImageUrl = request.ImageUrl;
+        category.ImageUrl = ImageUrlNormalizer.Normalize(request.ImageUrl);
         category.DisplayOrder = request.DisplayOrder;
         category.IsActive = request.IsActive;
         category.SeoTitle = request.SeoTitle;
@@ -452,6 +464,11 @@ public class CatalogService : ICatalogService
             throw new DomainException($"Product with SKU '{request.SKU}' already exists.");
         }
 
+        if (await _context.Products.AnyAsync(p => p.Slug.ToLower() == slug.ToLower() && !p.IsDeleted, cancellationToken))
+        {
+            throw new DomainException($"A product named '{request.Name.Trim()}' already exists. Please choose a different name.");
+        }
+
         var product = new Product
         {
             SKU = request.SKU.Trim().ToUpperInvariant(),
@@ -541,7 +558,7 @@ public class CatalogService : ICatalogService
             product.Images.Add(new ProductImage
             {
                 ProductId = product.Id,
-                Url = url,
+                Url = ImageUrlNormalizer.Normalize(url) ?? url,
                 SortOrder = sortOrder,
                 IsPrimary = sortOrder == 0
             });
@@ -614,8 +631,14 @@ public class CatalogService : ICatalogService
             product.IsActive
         };
 
+        var updatedProductSlug = GenerateSlug(request.Name);
+        var productSlugTaken = await _context.Products
+            .AnyAsync(p => p.Id != product.Id && p.Slug.ToLower() == updatedProductSlug.ToLower() && !p.IsDeleted, cancellationToken);
+        if (productSlugTaken)
+            throw new DomainException($"Another product named '{request.Name.Trim()}' already exists. Please choose a different name.");
+
         product.Name = request.Name.Trim();
-        product.Slug = GenerateSlug(request.Name);
+        product.Slug = updatedProductSlug;
         product.Description = request.Description;
         product.ShortDescription = request.ShortDescription;
         product.ProductType = request.ProductType;
@@ -705,7 +728,7 @@ public class CatalogService : ICatalogService
                 product.Images.Add(new ProductImage
                 {
                     ProductId = product.Id,
-                    Url = url,
+                    Url = ImageUrlNormalizer.Normalize(url) ?? url,
                     SortOrder = sortOrder,
                     IsPrimary = sortOrder == 0
                 });
