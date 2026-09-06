@@ -122,11 +122,13 @@ public class CatalogService : ICatalogService
                 throw new ResourceNotFoundException(nameof(Category), request.ParentCategoryId.Value);
         }
 
-        var slug = GenerateSlug(request.Name);
+        var (slug, isCustomSlug) = ResolveCategorySlug(request.Slug, request.Name);
         var slugTaken = await _context.Categories
             .AnyAsync(c => c.Slug.ToLower() == slug.ToLower() && !c.IsDeleted, cancellationToken);
         if (slugTaken)
-            throw new DomainException($"A category named '{request.Name.Trim()}' already exists. Please choose a different name.");
+            throw new DomainException(isCustomSlug
+                ? $"A category with the slug '{slug}' already exists. Please choose a different slug."
+                : $"A category named '{request.Name.Trim()}' already exists. Please choose a different name.");
 
         var category = new Category
         {
@@ -193,11 +195,13 @@ public class CatalogService : ICatalogService
 
         var before = new { category.Name, category.Slug, category.Description, category.IsActive };
 
-        var updatedSlug = GenerateSlug(request.Name);
+        var (updatedSlug, isCustomUpdatedSlug) = ResolveCategorySlug(request.Slug, request.Name);
         var updatedSlugTaken = await _context.Categories
             .AnyAsync(c => c.Id != category.Id && c.Slug.ToLower() == updatedSlug.ToLower() && !c.IsDeleted, cancellationToken);
         if (updatedSlugTaken)
-            throw new DomainException($"Another category named '{request.Name.Trim()}' already exists. Please choose a different name.");
+            throw new DomainException(isCustomUpdatedSlug
+                ? $"Another category with the slug '{updatedSlug}' already exists. Please choose a different slug."
+                : $"Another category named '{request.Name.Trim()}' already exists. Please choose a different name.");
 
         category.Name = request.Name.Trim();
         category.Slug = updatedSlug;
@@ -960,5 +964,21 @@ public class CatalogService : ICatalogService
         clean = System.Text.RegularExpressions.Regex.Replace(clean, @"[^a-z0-9\s-]", "");
         clean = System.Text.RegularExpressions.Regex.Replace(clean, @"\s+", "-").Trim('-');
         return clean;
+    }
+
+    /// <summary>
+    /// Uses the provided custom slug (normalized) when non-empty, otherwise derives the slug from the name.
+    /// Returns the resolved slug and whether a usable custom slug was supplied.
+    /// </summary>
+    private static (string Slug, bool IsCustom) ResolveCategorySlug(string? customSlug, string name)
+    {
+        if (!string.IsNullOrWhiteSpace(customSlug))
+        {
+            var normalized = GenerateSlug(customSlug);
+            if (normalized.Length > 0)
+                return (normalized, true);
+        }
+
+        return (GenerateSlug(name), false);
     }
 }

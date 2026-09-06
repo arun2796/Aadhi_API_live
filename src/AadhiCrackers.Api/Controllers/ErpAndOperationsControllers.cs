@@ -987,6 +987,14 @@ public class SettingsController : ControllerBase
         return Ok(ApiResponse<List<SystemSettingDto>>.Ok(settings, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpGet("public")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<Dictionary<string, string>>>> GetPublicSettings(CancellationToken cancellationToken)
+    {
+        var settings = await _settingsService.GetPublicSettingsAsync(cancellationToken);
+        return Ok(ApiResponse<Dictionary<string, string>>.Ok(settings, correlationId: _currentUser.CorrelationId));
+    }
+
     [HttpPut("{key}")]
     [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateSetting(string key, [FromBody] string value, CancellationToken cancellationToken)

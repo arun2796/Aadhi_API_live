@@ -110,6 +110,7 @@ public class CreateCategoryRequestValidator : AbstractValidator<CreateCategoryRe
     public CreateCategoryRequestValidator()
     {
         RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Slug).MaximumLength(150);
     }
 }
 

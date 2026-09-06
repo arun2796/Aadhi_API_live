@@ -20,6 +20,8 @@ public class CategoryDto
 public class CreateCategoryRequest
 {
     public string Name { get; set; } = string.Empty;
+    /// <summary>Optional custom URL slug. When empty, the slug is derived from Name.</summary>
+    public string? Slug { get; set; }
     public string? Description { get; set; }
     public Guid? ParentCategoryId { get; set; }
     public string? ImageUrl { get; set; }

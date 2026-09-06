@@ -13,10 +13,27 @@ public interface ISettingsService
     Task<List<SystemSettingDto>> GetSettingsAsync(string? group = null, CancellationToken cancellationToken = default);
     Task<string> GetSettingValueAsync(string key, string defaultValue = "", CancellationToken cancellationToken = default);
     Task<bool> UpdateSettingAsync(string key, string value, CancellationToken cancellationToken = default);
+    Task<Dictionary<string, string>> GetPublicSettingsAsync(CancellationToken cancellationToken = default);
 }
 
 public class SettingsService : ISettingsService
 {
+    // Hard whitelist for the anonymous storefront settings endpoint.
+    // ONLY keys matching these prefixes/exact keys are ever exposed publicly —
+    // never widen this list with security-sensitive groups (Jwt, RateLimiting, Smtp, etc.).
+    private static readonly string[] PublicKeyPrefixes =
+    {
+        "Store.",
+        "Website.",
+        "Delivery.",
+        "Shipping."
+    };
+
+    private static readonly string[] PublicExactKeys =
+    {
+        "DeliveryZones.Config"
+    };
+
     private readonly IApplicationDbContext _context;
     private readonly IAuditLogService _auditLog;
 
@@ -53,6 +70,22 @@ public class SettingsService : ISettingsService
     {
         var setting = await _context.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key.ToLower() == key.ToLower() && !s.IsDeleted, cancellationToken);
         return setting?.Value ?? defaultValue;
+    }
+
+    public async Task<Dictionary<string, string>> GetPublicSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _context.SystemSettings
+            .AsNoTracking()
+            .Where(s => !s.IsDeleted && !s.IsEncrypted)
+            .Select(s => new { s.Key, s.Value })
+            .ToListAsync(cancellationToken);
+
+        return settings
+            .Where(s =>
+                PublicExactKeys.Any(k => string.Equals(k, s.Key, StringComparison.OrdinalIgnoreCase)) ||
+                PublicKeyPrefixes.Any(p => s.Key.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(s => s.Key, s => s.Value);
     }
 
     public async Task<bool> UpdateSettingAsync(string key, string value, CancellationToken cancellationToken = default)
