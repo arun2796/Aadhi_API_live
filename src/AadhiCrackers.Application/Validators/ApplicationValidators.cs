@@ -167,3 +167,55 @@ public class CreateExpenseRequestValidator : AbstractValidator<CreateExpenseRequ
         RuleFor(x => x.Amount).GreaterThan(0);
     }
 }
+
+public class CreateEnquiryRequestValidator : AbstractValidator<AadhiCrackers.Contracts.Enquiries.CreateEnquiryRequest>
+{
+    public CreateEnquiryRequestValidator()
+    {
+        RuleFor(x => x.CustomerName).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Phone).NotEmpty().Matches(@"^\d{10}$").WithMessage("Enter a valid 10-digit phone number.");
+        RuleFor(x => x.Email).EmailAddress().WithMessage("A valid email address is required.")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
+        RuleFor(x => x.Source).IsInEnum();
+        RuleFor(x => x.Items).NotEmpty().WithMessage("Enquiry must contain at least one item.");
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(i => i.ProductName).NotEmpty().MaximumLength(150)
+                .When(i => !i.ProductId.HasValue)
+                .WithMessage("A product name is required for free-text enquiry items.");
+            item.RuleFor(i => i.Quantity).GreaterThan(0);
+            item.RuleFor(i => i.ExpectedPrice).GreaterThanOrEqualTo(0).When(i => i.ExpectedPrice.HasValue);
+            item.RuleFor(i => i.QuotedPrice).GreaterThanOrEqualTo(0).When(i => i.QuotedPrice.HasValue);
+        });
+    }
+}
+
+public class UpdateEnquiryRequestValidator : AbstractValidator<AadhiCrackers.Contracts.Enquiries.UpdateEnquiryRequest>
+{
+    public UpdateEnquiryRequestValidator()
+    {
+        RuleFor(x => x.CustomerName).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Phone).NotEmpty().Matches(@"^\d{10}$").WithMessage("Enter a valid 10-digit phone number.");
+        RuleFor(x => x.Email).EmailAddress().WithMessage("A valid email address is required.")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
+        RuleFor(x => x.Source).IsInEnum();
+        RuleFor(x => x.Items).NotEmpty().WithMessage("Enquiry must contain at least one item.");
+        RuleForEach(x => x.Items).ChildRules(item =>
+        {
+            item.RuleFor(i => i.ProductName).NotEmpty().MaximumLength(150)
+                .When(i => !i.ProductId.HasValue)
+                .WithMessage("A product name is required for free-text enquiry items.");
+            item.RuleFor(i => i.Quantity).GreaterThan(0);
+            item.RuleFor(i => i.ExpectedPrice).GreaterThanOrEqualTo(0).When(i => i.ExpectedPrice.HasValue);
+            item.RuleFor(i => i.QuotedPrice).GreaterThanOrEqualTo(0).When(i => i.QuotedPrice.HasValue);
+        });
+    }
+}
+
+public class UpdateEnquiryStatusRequestValidator : AbstractValidator<AadhiCrackers.Contracts.Enquiries.UpdateEnquiryStatusRequest>
+{
+    public UpdateEnquiryStatusRequestValidator()
+    {
+        RuleFor(x => x.Status).IsInEnum();
+    }
+}

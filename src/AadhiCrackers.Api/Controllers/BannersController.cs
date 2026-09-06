@@ -24,9 +24,10 @@ public class BannersController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<List<HomepageBannerDto>>>> GetBanners(
         [FromQuery] bool activeOnly = false,
+        [FromQuery] string? placement = null,
         CancellationToken cancellationToken = default)
     {
-        var banners = await _bannerService.GetBannersAsync(activeOnly, cancellationToken);
+        var banners = await _bannerService.GetBannersAsync(activeOnly, placement, cancellationToken);
         return Ok(ApiResponse<List<HomepageBannerDto>>.Ok(banners, correlationId: _currentUser.CorrelationId));
     }
 

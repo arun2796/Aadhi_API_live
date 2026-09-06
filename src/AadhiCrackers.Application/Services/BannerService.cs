@@ -10,7 +10,7 @@ namespace AadhiCrackers.Application.Services;
 
 public interface IBannerService
 {
-    Task<List<HomepageBannerDto>> GetBannersAsync(bool activeOnly = false, CancellationToken cancellationToken = default);
+    Task<List<HomepageBannerDto>> GetBannersAsync(bool activeOnly = false, string? placement = null, CancellationToken cancellationToken = default);
     Task<HomepageBannerDto?> GetBannerByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<HomepageBannerDto> CreateBannerAsync(CreateHomepageBannerRequest request, CancellationToken cancellationToken = default);
     Task<HomepageBannerDto> UpdateBannerAsync(Guid id, UpdateHomepageBannerRequest request, CancellationToken cancellationToken = default);
@@ -30,11 +30,17 @@ public class BannerService : IBannerService
         _auditLog = auditLog;
     }
 
-    public async Task<List<HomepageBannerDto>> GetBannersAsync(bool activeOnly = false, CancellationToken cancellationToken = default)
+    public async Task<List<HomepageBannerDto>> GetBannersAsync(bool activeOnly = false, string? placement = null, CancellationToken cancellationToken = default)
     {
         var query = _context.HomepageBanners
             .AsNoTracking()
             .Where(b => !b.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(placement))
+        {
+            var normalizedPlacement = NormalizePlacement(placement);
+            query = query.Where(b => b.Placement == normalizedPlacement);
+        }
 
         if (activeOnly)
         {
@@ -56,6 +62,7 @@ public class BannerService : IBannerService
                 MobileImageUrl = b.MobileImageUrl,
                 TargetUrl = b.TargetUrl,
                 CtaText = b.CtaText,
+                Placement = b.Placement,
                 DisplayOrder = b.DisplayOrder,
                 IsActive = b.IsActive,
                 StartDateUtc = b.StartDateUtc,
@@ -84,6 +91,7 @@ public class BannerService : IBannerService
             MobileImageUrl = banner.MobileImageUrl,
             TargetUrl = banner.TargetUrl,
             CtaText = banner.CtaText,
+            Placement = banner.Placement,
             DisplayOrder = banner.DisplayOrder,
             IsActive = banner.IsActive,
             StartDateUtc = banner.StartDateUtc,
@@ -112,6 +120,7 @@ public class BannerService : IBannerService
             MobileImageUrl = ImageUrlNormalizer.Normalize(request.MobileImageUrl),
             TargetUrl = string.IsNullOrWhiteSpace(request.TargetUrl) ? "/products" : request.TargetUrl.Trim(),
             CtaText = string.IsNullOrWhiteSpace(request.CtaText) ? "Shop Now" : request.CtaText.Trim(),
+            Placement = NormalizePlacement(request.Placement),
             DisplayOrder = request.DisplayOrder,
             IsActive = request.IsActive,
             StartDateUtc = request.StartDateUtc,
@@ -139,6 +148,7 @@ public class BannerService : IBannerService
             MobileImageUrl = banner.MobileImageUrl,
             TargetUrl = banner.TargetUrl,
             CtaText = banner.CtaText,
+            Placement = banner.Placement,
             DisplayOrder = banner.DisplayOrder,
             IsActive = banner.IsActive,
             StartDateUtc = banner.StartDateUtc,
@@ -170,6 +180,7 @@ public class BannerService : IBannerService
         banner.MobileImageUrl = ImageUrlNormalizer.Normalize(request.MobileImageUrl);
         banner.TargetUrl = string.IsNullOrWhiteSpace(request.TargetUrl) ? "/products" : request.TargetUrl.Trim();
         banner.CtaText = string.IsNullOrWhiteSpace(request.CtaText) ? "Shop Now" : request.CtaText.Trim();
+        banner.Placement = NormalizePlacement(request.Placement);
         banner.DisplayOrder = request.DisplayOrder;
         banner.IsActive = request.IsActive;
         banner.StartDateUtc = request.StartDateUtc;
@@ -196,11 +207,27 @@ public class BannerService : IBannerService
             MobileImageUrl = banner.MobileImageUrl,
             TargetUrl = banner.TargetUrl,
             CtaText = banner.CtaText,
+            Placement = banner.Placement,
             DisplayOrder = banner.DisplayOrder,
             IsActive = banner.IsActive,
             StartDateUtc = banner.StartDateUtc,
             EndDateUtc = banner.EndDateUtc,
             CreatedAtUtc = banner.CreatedAtUtc
+        };
+    }
+
+    private static string NormalizePlacement(string? placement)
+    {
+        if (string.IsNullOrWhiteSpace(placement))
+        {
+            return "Home";
+        }
+
+        return placement.Trim().ToLowerInvariant() switch
+        {
+            "home" => "Home",
+            "mobile" => "Mobile",
+            _ => throw new DomainException("Banner placement must be either 'Home' or 'Mobile'.")
         };
     }
 

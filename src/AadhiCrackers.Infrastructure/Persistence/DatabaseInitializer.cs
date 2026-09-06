@@ -491,6 +491,11 @@ public static class DatabaseInitializer
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
                     }
+                    else if (migrationId.Contains("AddEnquiriesAndBannerPlacement") && await TableExistsAsync(connection, "Enquiries", cancellationToken))
+                    {
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
                 }
 
                 logger.LogWarning(

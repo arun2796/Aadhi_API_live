@@ -9,6 +9,7 @@ public class HomepageBannerDto
     public string? MobileImageUrl { get; set; }
     public string TargetUrl { get; set; } = "/products";
     public string CtaText { get; set; } = "Shop Now";
+    public string Placement { get; set; } = "Home";
     public int DisplayOrder { get; set; }
     public bool IsActive { get; set; }
     public DateTime? StartDateUtc { get; set; }
@@ -24,6 +25,7 @@ public class CreateHomepageBannerRequest
     public string? MobileImageUrl { get; set; }
     public string TargetUrl { get; set; } = "/products";
     public string CtaText { get; set; } = "Shop Now";
+    public string Placement { get; set; } = "Home";
     public int DisplayOrder { get; set; } = 1;
     public bool IsActive { get; set; } = true;
     public DateTime? StartDateUtc { get; set; }
@@ -38,6 +40,7 @@ public class UpdateHomepageBannerRequest
     public string? MobileImageUrl { get; set; }
     public string TargetUrl { get; set; } = "/products";
     public string CtaText { get; set; } = "Shop Now";
+    public string Placement { get; set; } = "Home";
     public int DisplayOrder { get; set; } = 1;
     public bool IsActive { get; set; } = true;
     public DateTime? StartDateUtc { get; set; }
