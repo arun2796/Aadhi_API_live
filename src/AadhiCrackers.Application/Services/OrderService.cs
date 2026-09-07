@@ -44,19 +44,65 @@ public class OrderService : IOrderService
     private readonly IAuditLogService _auditLog;
     private readonly IOutboxService _outbox;
     private readonly IBusinessNumberGenerator _numberGenerator;
+    private readonly IFileStorageService? _fileStorage;
 
     public OrderService(
         IApplicationDbContext context,
         ICurrentUserService currentUser,
         IAuditLogService auditLog,
         IOutboxService outbox,
-        IBusinessNumberGenerator numberGenerator)
+        IBusinessNumberGenerator numberGenerator,
+        IFileStorageService? fileStorage = null)
     {
         _context = context;
         _currentUser = currentUser;
         _auditLog = auditLog;
         _outbox = outbox;
         _numberGenerator = numberGenerator;
+        _fileStorage = fileStorage;
+    }
+
+    private async Task<string?> ProcessScreenshotBase64Async(string? base64Data, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(base64Data)) return null;
+
+        var trimmed = base64Data.Trim();
+        if (!trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && 
+            (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.StartsWith("/storage/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return trimmed;
+        }
+
+        if (_fileStorage == null) return trimmed;
+
+        try
+        {
+            var raw = trimmed;
+            var ext = ".jpg";
+
+            if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var commaIndex = raw.IndexOf(',');
+                if (commaIndex >= 0)
+                {
+                    var header = raw[..commaIndex];
+                    if (header.Contains("image/png", StringComparison.OrdinalIgnoreCase)) ext = ".png";
+                    else if (header.Contains("image/webp", StringComparison.OrdinalIgnoreCase)) ext = ".webp";
+                    raw = raw[(commaIndex + 1)..];
+                }
+            }
+
+            var bytes = Convert.FromBase64String(raw.Trim());
+            using var stream = new MemoryStream(bytes);
+            var savedPath = await _fileStorage.SaveFileAsync(stream, $"proof_{Guid.NewGuid():N}{ext}", "payment-proofs", cancellationToken);
+            return savedPath;
+        }
+        catch
+        {
+            return trimmed;
+        }
     }
 
     public async Task<OrderDto> CreateOrderAsync(CreateOrderRequest request, CancellationToken cancellationToken = default)
@@ -106,6 +152,16 @@ public class OrderService : IOrderService
         var orderNumber = await _numberGenerator.GenerateOrderNumberAsync(cancellationToken);
         var deliveryMethod = NormalizeDeliveryMethod(request.DeliveryMethod);
 
+        string? screenshotUrl = request.PaymentScreenshotUrl;
+        if (!string.IsNullOrWhiteSpace(request.PaymentScreenshotBase64))
+        {
+            screenshotUrl = await ProcessScreenshotBase64Async(request.PaymentScreenshotBase64, cancellationToken);
+        }
+        else if (!string.IsNullOrWhiteSpace(screenshotUrl) && screenshotUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            screenshotUrl = await ProcessScreenshotBase64Async(screenshotUrl, cancellationToken);
+        }
+
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -120,8 +176,8 @@ public class OrderService : IOrderService
             Notes = request.Notes,
             PlacedAtUtc = DateTime.UtcNow,
             UtrNumber = request.UtrNumber,
-            PaymentScreenshotUrl = request.PaymentScreenshotUrl ?? request.PaymentScreenshotBase64,
-            PaymentSubmittedAtUtc = !string.IsNullOrWhiteSpace(request.UtrNumber) || !string.IsNullOrWhiteSpace(request.PaymentScreenshotUrl) || !string.IsNullOrWhiteSpace(request.PaymentScreenshotBase64) ? DateTime.UtcNow : null,
+            PaymentScreenshotUrl = screenshotUrl,
+            PaymentSubmittedAtUtc = !string.IsNullOrWhiteSpace(request.UtrNumber) || !string.IsNullOrWhiteSpace(screenshotUrl) ? DateTime.UtcNow : null,
             ShippingAddress = request.ShippingAddress,
             BillingAddress = request.BillingAddress ?? (request.ShippingAddress with { }),
             TrackingNumber = $"TRK-{Random.Shared.Next(10000000, 99999999)}"
@@ -773,7 +829,8 @@ public class OrderService : IOrderService
             ?? throw new ResourceNotFoundException(nameof(Order), orderId);
 
         order.UtrNumber = request.UtrNumber.Trim();
-        order.PaymentScreenshotUrl = request.PaymentScreenshotUrl ?? request.PaymentScreenshotBase64 ?? request.ScreenshotBase64;
+        var rawScreenshot = request.PaymentScreenshotUrl ?? request.PaymentScreenshotBase64 ?? request.ScreenshotBase64;
+        order.PaymentScreenshotUrl = await ProcessScreenshotBase64Async(rawScreenshot, cancellationToken);
         order.PaymentSubmittedAtUtc = DateTime.UtcNow;
         order.PaymentVerificationNotes = request.Notes;
 
