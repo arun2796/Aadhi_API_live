@@ -50,12 +50,31 @@ builder.Services.AddControllers(options =>
 builder.Services.AddAppRateLimiting();
 
 // 4. CORS
+// Origins come from config key "Cors:AllowedOrigins" (env Cors__AllowedOrigins) as a semicolon-
+// or comma-separated list, e.g. "https://aadhi-crackers-store.onrender.com;https://aadhi-crackers-erp.onrender.com".
+// When configured, CORS is restricted to exactly those origins; when empty, the historical
+// allow-all behavior is kept (and a warning is logged outside Development).
+var corsAllowedOrigins = (builder.Configuration["Cors:AllowedOrigins"] ?? string.Empty)
+    .Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(origin => origin.TrimEnd('/'))
+    .Where(origin => origin.Length > 0)
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AadhiCorsPolicy", policy =>
     {
-        policy.SetIsOriginAllowed(_ => true) // Allow localhost, LAN IPs, and frontend origins
-            .AllowAnyHeader()
+        if (corsAllowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(corsAllowedOrigins);
+        }
+        else
+        {
+            policy.SetIsOriginAllowed(_ => true); // Allow localhost, LAN IPs, and frontend origins
+        }
+
+        policy.AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()
             .WithExposedHeaders("X-Correlation-ID", "Retry-After");
@@ -110,7 +129,28 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// 7. Seed Database and Initial Provisioning
+// 7. Production configuration warnings (warn loudly, never block startup)
+if (!app.Environment.IsDevelopment())
+{
+    if (JwtSecretProvider.IsDefaultSecret(app.Configuration))
+    {
+        app.Logger.LogWarning("⚠️ SECURITY WARNING: Default JWT secret in use — set Jwt__Secret");
+    }
+
+    if (corsAllowedOrigins.Length == 0)
+    {
+        app.Logger.LogWarning(
+            "⚠️ SECURITY WARNING: CORS is allowing all origins — set Cors__AllowedOrigins " +
+            "(e.g. \"https://aadhi-crackers-store.onrender.com;https://aadhi-crackers-erp.onrender.com\") to restrict access");
+    }
+}
+
+if (corsAllowedOrigins.Length > 0)
+{
+    app.Logger.LogInformation("CORS restricted to configured origins: {Origins}", string.Join(", ", corsAllowedOrigins));
+}
+
+// 8. Seed Database and Initial Provisioning
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
@@ -122,7 +162,13 @@ using (var scope = app.Services.CreateScope())
         var roleManager = services.GetRequiredService<RoleManager<ApplicationRole>>();
 
         await DatabaseInitializer.InitializeAsync(context, logger);
-        await DatabaseSeeder.SeedAsync(context, userManager, roleManager, logger);
+        await DatabaseSeeder.SeedAsync(
+            context,
+            userManager,
+            roleManager,
+            logger,
+            app.Configuration,
+            app.Environment.IsDevelopment());
     }
     catch (Exception ex)
     {
@@ -131,7 +177,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// 8. HTTP Middleware Pipeline
+// 9. HTTP Middleware Pipeline
 app.UseExceptionHandler();
 
 app.UseCorrelationId();

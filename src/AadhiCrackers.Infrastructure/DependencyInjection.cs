@@ -53,11 +53,9 @@ public static class DependencyInjection
         .AddDefaultTokenProviders();
 
         // JWT Authentication Configuration
-        var secretKey = configuration["JwtSettings:SecretKey"];
-        if (string.IsNullOrWhiteSpace(secretKey))
-        {
-            secretKey = "AadhiCrackers_Secure_Enterprise_JWT_Secret_Key_2026_!@#$999_SUPER_SECURE";
-        }
+        // Secret resolution: Jwt:Secret (env Jwt__Secret) -> JwtSettings:SecretKey -> built-in default.
+        // A startup warning is logged (Program.cs) when the default is in use outside Development.
+        var secretKey = JwtSecretProvider.Resolve(configuration);
         var issuer = configuration["JwtSettings:Issuer"] ?? "AadhiCrackers.Api";
         var audience = configuration["JwtSettings:Audience"] ?? "AadhiCrackers.Clients";
 

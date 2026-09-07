@@ -4,20 +4,31 @@ using AadhiCrackers.Domain.ValueObjects;
 using AadhiCrackers.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace AadhiCrackers.Infrastructure.Persistence;
 
 public static class DatabaseSeeder
 {
+    private const string DefaultAdminEmail = "admin@aadhicrackers.com";
+    private const string DefaultAdminPassword = "Admin@123";
+
+    
     public static async Task SeedAsync(
         AadhiDbContext context,
         UserManager<ApplicationUser> userManager,
         RoleManager<ApplicationRole> roleManager,
-        ILogger logger)
+        ILogger logger,
+        IConfiguration configuration,
+        bool isDevelopment)
     {
         try
         {
+            var includeDemoData = ShouldIncludeDemoData(configuration, isDevelopment);
+
+            // ───────────────────────── ESSENTIALS (always seeded) ─────────────────────────
+
             // 1. Seed Roles
             foreach (var roleName in AppRoles.All)
             {
@@ -27,11 +38,24 @@ public static class DatabaseSeeder
                 }
             }
 
-            // 2. Seed Admin User
-            var adminEmail = "admin@aadhicrackers.com";
+            var adminEmail = configuration["Seeding:AdminEmail"];
+            if (string.IsNullOrWhiteSpace(adminEmail))
+            {
+                adminEmail = DefaultAdminEmail;
+            }
+
+            var configuredAdminPassword = configuration["Seeding:AdminPassword"];
+            var usesDefaultAdminPassword = string.IsNullOrWhiteSpace(configuredAdminPassword);
+            var adminPassword = usesDefaultAdminPassword ? DefaultAdminPassword : configuredAdminPassword!;
+
             var adminUser = await userManager.FindByEmailAsync(adminEmail);
             if (adminUser == null)
             {
+                if (usesDefaultAdminPassword && !isDevelopment)
+                {
+                    logger.LogWarning("⚠️ SECURITY WARNING: Default admin password in use — set Seeding__AdminPassword");
+                }
+
                 adminUser = new ApplicationUser
                 {
                     UserName = adminEmail,
@@ -45,15 +69,106 @@ public static class DatabaseSeeder
                     CreatedAtUtc = DateTime.UtcNow
                 };
 
-                var res = await userManager.CreateAsync(adminUser, "Admin@123");
+                var res = await userManager.CreateAsync(adminUser, adminPassword);
                 if (res.Succeeded)
                 {
                     await userManager.AddToRoleAsync(adminUser, AppRoles.SuperAdmin);
                 }
             }
 
-            // 3. Seed Customer User
-            var customerEmail = "customer@aadhicrackers.com";
+            // 3. Seed Main Warehouse (required for stock operations)
+            var mainWarehouse = await context.Warehouses.FirstOrDefaultAsync(w => w.Code == "WH-SVK-01");
+            if (mainWarehouse == null)
+            {
+                mainWarehouse = new Warehouse
+                {
+                    Code = "WH-SVK-01",
+                    Name = "Main Central Warehouse - Sivakasi",
+                    Address = "45, Bypass Road, Sivakasi, Tamil Nadu 626123",
+                    Phone = "+91 4562 278900",
+                    IsActive = true,
+                    IsPrimary = true
+                };
+                context.Warehouses.Add(mainWarehouse);
+                await context.SaveChangesAsync();
+            }
+
+            // 4. Seed System Settings (idempotent — inserts missing keys, never overwrites existing values)
+            var settingDefaults = new SystemSetting[]
+            {
+                new() { Key = "Store.BusinessName", Value = "AADHI CRACKERS", Group = "Store", Description = "Official Business Name" },
+                new() { Key = "Store.Tagline", Value = "Celebrate Every Moment", Group = "Store", Description = "Brand Tagline" },
+                new() { Key = "Store.Phone", Value = "+91 98765 43210", Group = "Store", Description = "Contact Phone" },
+                new() { Key = "Store.Email", Value = "support@aadhicrackers.com", Group = "Store", Description = "Support Email" },
+                new() { Key = "Store.Address", Value = "123, West Street, Sivanandapuram, Coimbatore, Tamil Nadu - 641012", Group = "Store", Description = "Physical Store Address" },
+                new() { Key = "Tax.GstRate", Value = "18.00", Group = "Tax", Description = "Default GST Rate for Fireworks" },
+                new() { Key = "Shipping.FreeShippingThreshold", Value = "3000.00", Group = "Shipping", Description = "Free shipping order minimum (standard delivery only)" },
+                new() { Key = "Shipping.StandardCharge", Value = "150.00", Group = "Shipping", Description = "Standard delivery charge" },
+                new() { Key = "Delivery.StandardCharge", Value = "40.00", Group = "Shipping", Description = "Standard delivery charge (3-5 days)" },
+                new() { Key = "Delivery.ExpressCharge", Value = "90.00", Group = "Shipping", Description = "Express delivery charge (1-2 days); never free" },
+                new() { Key = "RateLimiting.Enabled", Value = "true", Group = "Security", Description = "Enable API Rate Limiting" }
+            };
+
+            var addedSettings = false;
+            foreach (var setting in settingDefaults)
+            {
+                var exists = await context.SystemSettings
+                    .IgnoreQueryFilters()
+                    .AnyAsync(s => s.Key == setting.Key);
+                if (!exists)
+                {
+                    context.SystemSettings.Add(setting);
+                    addedSettings = true;
+                }
+            }
+
+            if (addedSettings)
+            {
+                await context.SaveChangesAsync();
+            }
+
+            // ───────────────────────── DEMO DATA (gated) ─────────────────────────
+            if (includeDemoData)
+            {
+                logger.LogInformation("Seeding demo data (Seeding:IncludeDemoData=true).");
+                await SeedDemoDataAsync(context, userManager);
+            }
+            else
+            {
+                logger.LogInformation("Demo data seeding skipped (Seeding:IncludeDemoData=false) — essentials only.");
+            }
+
+            logger.LogInformation("✅ Database seed completed successfully.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "❌ Error occurred during database seeding.");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Explicit config value always wins; otherwise demo data defaults to true only in Development.
+    /// </summary>
+    private static bool ShouldIncludeDemoData(IConfiguration configuration, bool isDevelopment)
+    {
+        var configured = configuration["Seeding:IncludeDemoData"];
+        if (bool.TryParse(configured, out var explicitValue))
+        {
+            return explicitValue;
+        }
+
+        return isDevelopment;
+    }
+
+    private static async Task SeedDemoDataAsync(
+        AadhiDbContext context,
+        UserManager<ApplicationUser> userManager)
+    {
+        var mainWarehouse = await context.Warehouses.FirstAsync(w => w.Code == "WH-SVK-01");
+
+        // D1. Seed Sample Customer User
+        var customerEmail = "customer@aadhicrackers.com";
             var customerUser = await userManager.FindByEmailAsync(customerEmail);
             Customer? customerEntity = null;
 
@@ -113,20 +228,11 @@ public static class DatabaseSeeder
                 customerEntity = await context.Customers.FirstOrDefaultAsync(c => c.Email == customerEmail);
             }
 
-            // 4. Seed Warehouses
-            var mainWarehouse = await context.Warehouses.FirstOrDefaultAsync(w => w.Code == "WH-SVK-01");
-            if (mainWarehouse == null)
+            // D2. Seed Demo Hub Warehouse (main warehouse is seeded in essentials)
+            var hubWarehouse = await context.Warehouses.FirstOrDefaultAsync(w => w.Code == "WH-CBE-01");
+            if (hubWarehouse == null)
             {
-                mainWarehouse = new Warehouse
-                {
-                    Code = "WH-SVK-01",
-                    Name = "Main Central Warehouse - Sivakasi",
-                    Address = "45, Bypass Road, Sivakasi, Tamil Nadu 626123",
-                    Phone = "+91 4562 278900",
-                    IsActive = true,
-                    IsPrimary = true
-                };
-                var hubWarehouse = new Warehouse
+                hubWarehouse = new Warehouse
                 {
                     Code = "WH-CBE-01",
                     Name = "Hub Distribution Center - Coimbatore",
@@ -135,11 +241,11 @@ public static class DatabaseSeeder
                     IsActive = true,
                     IsPrimary = false
                 };
-                context.Warehouses.AddRange(mainWarehouse, hubWarehouse);
+                context.Warehouses.Add(hubWarehouse);
                 await context.SaveChangesAsync();
             }
 
-            // 5. Seed Suppliers
+            // D3. Seed Demo Suppliers
             var supplier = await context.Suppliers.FirstOrDefaultAsync(s => s.Code == "SUP-001");
             if (supplier == null)
             {
@@ -158,7 +264,7 @@ public static class DatabaseSeeder
                 await context.SaveChangesAsync();
             }
 
-            // 6. Seed Brands
+            // D4. Seed Demo Brands
             var aadhiBrand = await context.Brands.FirstOrDefaultAsync(b => b.Slug == "aadhi-crackers");
             if (aadhiBrand == null)
             {
@@ -189,7 +295,7 @@ public static class DatabaseSeeder
                 await context.SaveChangesAsync();
             }
 
-            // 7. Seed Categories
+            // D5. Seed Demo Categories
             if (!await context.Categories.AnyAsync())
             {
                 var giftBoxesCat = new Category
@@ -259,7 +365,7 @@ public static class DatabaseSeeder
                 context.Categories.AddRange(giftBoxesCat, comboOffersCat, sparklersCat, groundChakkarCat, flowerPotsCat, rocketsCat, aerialShotsCat);
                 await context.SaveChangesAsync();
 
-                // 8. Seed Products matching Screenshot visual design
+                // D6. Seed Demo Products matching Screenshot visual design
                 var products = new List<Product>
                 {
                     new Product
@@ -649,7 +755,7 @@ public static class DatabaseSeeder
 
                 await context.SaveChangesAsync();
 
-                // 9. Seed Sample Orders matching ERP mockup
+                // D7. Seed Demo Sample Orders matching ERP mockup
                 if (customerEntity != null)
                 {
                     var megaBox = products.First(p => p.SKU == "GB-MGA-002");
@@ -753,7 +859,7 @@ public static class DatabaseSeeder
                     await context.SaveChangesAsync();
                 }
 
-                // 10. Seed Promotions
+                // D8. Seed Demo Promotions
                 context.Promotions.AddRange(
                     new Promotion
                     {
@@ -792,54 +898,7 @@ public static class DatabaseSeeder
                     }
                 );
 
-                // 11. Seed System Settings
-                context.SystemSettings.AddRange(
-                    new SystemSetting { Key = "Store.BusinessName", Value = "AADHI CRACKERS", Group = "Store", Description = "Official Business Name" },
-                    new SystemSetting { Key = "Store.Tagline", Value = "Celebrate Every Moment", Group = "Store", Description = "Brand Tagline" },
-                    new SystemSetting { Key = "Store.Phone", Value = "+91 98765 43210", Group = "Store", Description = "Contact Phone" },
-                    new SystemSetting { Key = "Store.Email", Value = "support@aadhicrackers.com", Group = "Store", Description = "Support Email" },
-                    new SystemSetting { Key = "Store.Address", Value = "123, West Street, Sivanandapuram, Coimbatore, Tamil Nadu - 641012", Group = "Store", Description = "Physical Store Address" },
-                    new SystemSetting { Key = "Tax.GstRate", Value = "18.00", Group = "Tax", Description = "Default GST Rate for Fireworks" },
-                    new SystemSetting { Key = "Shipping.FreeShippingThreshold", Value = "3000.00", Group = "Shipping", Description = "Free shipping order minimum" },
-                    new SystemSetting { Key = "Shipping.StandardCharge", Value = "150.00", Group = "Shipping", Description = "Standard delivery charge" },
-                    new SystemSetting { Key = "RateLimiting.Enabled", Value = "true", Group = "Security", Description = "Enable API Rate Limiting" }
-                );
-
                 await context.SaveChangesAsync();
             }
-
-            // 12. Ensure delivery/shipping settings exist (idempotent — safe on existing databases)
-            var deliverySettingDefaults = new SystemSetting[]
-            {
-                new() { Key = "Delivery.StandardCharge", Value = "40.00", Group = "Shipping", Description = "Standard delivery charge (3-5 days)" },
-                new() { Key = "Delivery.ExpressCharge", Value = "90.00", Group = "Shipping", Description = "Express delivery charge (1-2 days); never free" },
-                new() { Key = "Shipping.FreeShippingThreshold", Value = "3000.00", Group = "Shipping", Description = "Free shipping order minimum (standard delivery only)" }
-            };
-
-            var addedDeliverySettings = false;
-            foreach (var setting in deliverySettingDefaults)
-            {
-                var exists = await context.SystemSettings
-                    .IgnoreQueryFilters()
-                    .AnyAsync(s => s.Key == setting.Key);
-                if (!exists)
-                {
-                    context.SystemSettings.Add(setting);
-                    addedDeliverySettings = true;
-                }
-            }
-
-            if (addedDeliverySettings)
-            {
-                await context.SaveChangesAsync();
-            }
-
-            logger.LogInformation("✅ Database seed completed successfully.");
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "❌ Error occurred during database seeding.");
-            throw;
-        }
     }
 }

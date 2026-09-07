@@ -829,7 +829,7 @@ public class IdentityService : IIdentityService
 
     private string GenerateJwtToken(ApplicationUser user, string role, List<string> permissions)
     {
-        var secretKey = _configuration["JwtSettings:SecretKey"] ?? "AadhiCrackers_Secure_Enterprise_JWT_Secret_Key_2026_!@#$999";
+        var secretKey = JwtSecretProvider.Resolve(_configuration); // must match validation key in DependencyInjection
         var issuer = _configuration["JwtSettings:Issuer"] ?? "AadhiCrackers.Api";
         var audience = _configuration["JwtSettings:Audience"] ?? "AadhiCrackers.Clients";
         var expiryMinutes = int.TryParse(_configuration["JwtSettings:ExpiryMinutes"], out var exp) ? exp : 1440; // 24 hours
