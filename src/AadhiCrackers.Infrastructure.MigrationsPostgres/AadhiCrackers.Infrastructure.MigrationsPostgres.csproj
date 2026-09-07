@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PostgreSQL-only migrations assembly for AadhiDbContext.
+
+    The historical migrations in AadhiCrackers.Infrastructure/Persistence/Migrations were generated
+    against the SQLite provider and cannot be applied through Npgsql. EF Core's supported pattern for
+    one DbContext targeting multiple providers is one migrations assembly per provider
+    (https://learn.microsoft.com/ef/core/managing-schemas/migrations/providers). The provider chosen
+    at runtime (DatabaseProvider config key, see AadhiCrackers.Infrastructure/DependencyInjection.cs)
+    selects the matching assembly via MigrationsAssembly:
+      - Sqlite   -> AadhiCrackers.Infrastructure           (Persistence/Migrations)
+      - Postgres -> AadhiCrackers.Infrastructure.MigrationsPostgres (this project, Migrations/)
+
+    To add a new PostgreSQL migration (PowerShell, from the repo root):
+      $env:DatabaseProvider = 'PostgreSql'
+      $env:ConnectionStrings__DefaultConnection = 'Host=localhost;Database=design;Username=design;Password=design'
+      dotnet ef migrations add [Name]
+        with "project" = src/AadhiCrackers.Infrastructure.MigrationsPostgres,
+             "startup-project" = src/AadhiCrackers.Api, "output-dir" = Migrations
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AadhiCrackers.Infrastructure\AadhiCrackers.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+  </ItemGroup>
+
+</Project>

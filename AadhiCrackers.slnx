@@ -5,6 +5,7 @@
     <Project Path="src/AadhiCrackers.Contracts/AadhiCrackers.Contracts.csproj" />
     <Project Path="src/AadhiCrackers.Domain/AadhiCrackers.Domain.csproj" />
     <Project Path="src/AadhiCrackers.Infrastructure/AadhiCrackers.Infrastructure.csproj" />
+    <Project Path="src/AadhiCrackers.Infrastructure.MigrationsPostgres/AadhiCrackers.Infrastructure.MigrationsPostgres.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AadhiCrackers.Api.Tests/AadhiCrackers.Api.Tests.csproj" />

@@ -26,6 +26,17 @@ public static class DatabaseInitializer
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
+        // Everything below the guard (schema integrity patching, legacy baselining) is SQLite-only:
+        // it uses sqlite_master, PRAGMA table_info and SQLite-dialect DDL, and stamps migration
+        // history rows for the SQLite migration set. On any other provider (PostgreSQL/Npgsql,
+        // whose migrations live in AadhiCrackers.Infrastructure.MigrationsPostgres) the schema is
+        // managed exclusively by EF migrations, so we only run MigrateAsync.
+        if (!context.Database.IsSqlite())
+        {
+            await context.Database.MigrateAsync(cancellationToken);
+            return;
+        }
+
         await EnsureSchemaIntegrityAsync(context, cancellationToken);
         await BaselineExistingSchemaAsync(context, logger, cancellationToken);
         await context.Database.MigrateAsync(cancellationToken);

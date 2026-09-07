@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="..\AadhiCrackers.Application\AadhiCrackers.Application.csproj" />
     <ProjectReference Include="..\AadhiCrackers.Infrastructure\AadhiCrackers.Infrastructure.csproj" />
+    <!-- PostgreSQL migrations assembly; must be loadable at runtime when DatabaseProvider=PostgreSql. -->
+    <ProjectReference Include="..\AadhiCrackers.Infrastructure.MigrationsPostgres\AadhiCrackers.Infrastructure.MigrationsPostgres.csproj" />
     <ProjectReference Include="..\AadhiCrackers.Contracts\AadhiCrackers.Contracts.csproj" />
   </ItemGroup>
 

@@ -22,11 +22,30 @@ public static class DependencyInjection
             ?? configuration.GetConnectionString("PostgreSqlConnection")
             ?? "Data Source=aadhicrackers.db";
 
+        // DatabaseProvider selects the EF provider: "PostgreSql" / "Postgres" / "PostgreSQL"
+        // (case-insensitive) -> Npgsql; anything else (default) -> SQLite for local dev.
         var provider = configuration["DatabaseProvider"] ?? "Sqlite";
+        var usePostgres = provider.Equals("PostgreSql", StringComparison.OrdinalIgnoreCase)
+            || provider.Equals("Postgres", StringComparison.OrdinalIgnoreCase);
 
         services.AddDbContext<AadhiDbContext>(options =>
         {
-            options.UseSqlite(connectionString, b => b.MigrationsAssembly(typeof(AadhiDbContext).Assembly.FullName));
+            if (usePostgres)
+            {
+                // Multi-provider migrations use EF's supported one-migrations-assembly-per-provider
+                // pattern (https://learn.microsoft.com/ef/core/managing-schemas/migrations/providers):
+                //   - SQLite   -> historical set in this assembly (Persistence/Migrations)
+                //   - Postgres -> AadhiCrackers.Infrastructure.MigrationsPostgres (separate project)
+                // The connection string may be a postgres(ql):// URI (Neon/Heroku style); Npgsql
+                // only accepts keyword form, so it is normalized first.
+                options.UseNpgsql(
+                    PostgresConnectionStringHelper.Normalize(connectionString),
+                    b => b.MigrationsAssembly("AadhiCrackers.Infrastructure.MigrationsPostgres"));
+            }
+            else
+            {
+                options.UseSqlite(connectionString, b => b.MigrationsAssembly(typeof(AadhiDbContext).Assembly.FullName));
+            }
         });
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<AadhiDbContext>());
