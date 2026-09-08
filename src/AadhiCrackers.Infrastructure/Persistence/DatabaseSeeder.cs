@@ -116,6 +116,29 @@ public static class DatabaseSeeder
                 await context.SaveChangesAsync();
             }
 
+            // Zero out any delivery charges on existing orders (Sivakasi crackers have no delivery charges)
+            var ordersWithShipping = await context.Orders
+                .IgnoreQueryFilters()
+                .ToListAsync();
+
+            var shippingUpdated = false;
+            foreach (var o in ordersWithShipping)
+            {
+                var expectedTotal = Math.Max(0m, o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal() + o.Tax.ToDecimal());
+                if (o.ShippingCharge.ToDecimal() > 0 || o.GrandTotal.ToDecimal() != expectedTotal)
+                {
+                    o.ShippingCharge = Money.Zero();
+                    o.GrandTotal = Money.FromDecimal(expectedTotal);
+                    shippingUpdated = true;
+                }
+            }
+
+            if (shippingUpdated)
+            {
+                await context.SaveChangesAsync();
+                logger.LogInformation("Zeroed out delivery charges on existing orders.");
+            }
+
             // ───────────────────────── DEMO DATA (gated) ─────────────────────────
             if (includeDemoData)
             {

@@ -23,8 +23,8 @@ public class CartDto
     public decimal Subtotal => Items.Sum(i => i.LineTotal);
     public decimal Discount { get; set; }
     public string? CouponCode { get; set; }
-    public decimal ShippingCharge { get; set; } // computed server-side from SystemSettings (Delivery.* keys)
-    public decimal GrandTotal => Math.Max(0, Subtotal - Discount + ShippingCharge);
+    public decimal ShippingCharge { get; set; } = 0m; // Sivakasi cracker orders are strictly To-Pay freight
+    public decimal GrandTotal => Math.Max(0, Subtotal - Discount);
 }
 
 public class AddToCartRequest

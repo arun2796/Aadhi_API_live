@@ -235,16 +235,11 @@ public class OrderService : IOrderService
         }
         order.Discount = discount;
 
-        // Shipping calculation from SystemSettings (Delivery.* keys):
-        // standard becomes free at/above the free-shipping threshold; express is never free.
-        var settings = await GetDeliverySettingsAsync(cancellationToken);
-        var shippingAmount = deliveryMethod == DeliveryMethodExpress
-            ? settings.ExpressCharge
-            : (itemsSubtotal.ToDecimal() >= settings.FreeShippingThreshold ? 0m : settings.StandardCharge);
-        var shippingCharge = Money.FromDecimal(shippingAmount);
+        // Shipping calculation: Sivakasi Cracker orders have NO online delivery charges (Transport freight is collected To-Pay at lorry office)
+        var shippingCharge = Money.Zero();
         order.ShippingCharge = shippingCharge;
 
-        order.GrandTotal = itemsSubtotal - discount + totalTax + shippingCharge;
+        order.GrandTotal = itemsSubtotal - discount + totalTax;
 
         // Initial Order History
         order.StatusHistories.Add(new OrderStatusHistory
@@ -319,6 +314,17 @@ public class OrderService : IOrderService
             ?? throw new ResourceNotFoundException(nameof(Order), orderId);
 
         var oldStatus = order.OrderStatus;
+        if (order.OrderStatus == request.NewStatus)
+        {
+            if (!string.IsNullOrWhiteSpace(request.TrackingNumber))
+            {
+                order.TrackingNumber = request.TrackingNumber.Trim();
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            return await GetOrderByIdAsync(order.Id, cancellationToken)
+                ?? throw new InvalidOperationException("Failed to retrieve order");
+        }
+
         order.ChangeStatus(request.NewStatus, request.Reason, _currentUser.UserName ?? "Admin");
         if (!string.IsNullOrWhiteSpace(request.TrackingNumber))
         {
@@ -595,7 +601,7 @@ public class OrderService : IOrderService
                 Tax = i.Tax.ToDecimal(),
                 LineTotal = i.LineTotal.ToDecimal()
             }).ToList(),
-            GrandTotal = order.GrandTotal.ToDecimal()
+            GrandTotal = Math.Max(0m, order.ItemsSubtotal.ToDecimal() - order.Discount.ToDecimal() + order.Tax.ToDecimal())
         };
     }
 
@@ -972,8 +978,10 @@ public class OrderService : IOrderService
             ItemsSubtotal = o.ItemsSubtotal.ToDecimal(),
             Discount = o.Discount.ToDecimal(),
             Tax = o.Tax.ToDecimal(),
-            ShippingCharge = o.ShippingCharge.ToDecimal(),
-            GrandTotal = o.GrandTotal.ToDecimal(),
+            ShippingCharge = 0m,
+            GrandTotal = o.ItemsSubtotal.ToDecimal() > 0
+                ? Math.Max(0m, o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal() + o.Tax.ToDecimal())
+                : o.GrandTotal.ToDecimal(),
             CouponCode = o.CouponCode,
             Notes = o.Notes,
             TrackingNumber = o.TrackingNumber,
