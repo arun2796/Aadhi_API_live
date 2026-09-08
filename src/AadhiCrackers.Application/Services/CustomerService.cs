@@ -202,35 +202,37 @@ public class CustomerService : ICustomerService
 
     private static CustomerDto MapToDto(Customer c)
     {
-        var nonCancelledOrders = c.Orders.Where(o => o.OrderStatus != OrderStatus.Cancelled && !o.IsDeleted).ToList();
+        var nonCancelledOrders = c.Orders?.Where(o => o != null && o.OrderStatus != OrderStatus.Cancelled && !o.IsDeleted).ToList() ?? new List<Order>();
         return new CustomerDto
         {
             Id = c.Id,
-            CustomerCode = c.CustomerCode,
-            FirstName = c.FirstName,
-            LastName = c.LastName,
-            Email = c.Email,
-            Phone = c.Phone,
+            CustomerCode = c.CustomerCode ?? string.Empty,
+            FirstName = c.FirstName ?? string.Empty,
+            LastName = c.LastName ?? string.Empty,
+            Email = c.Email ?? string.Empty,
+            Phone = c.Phone ?? string.Empty,
             DateOfBirth = c.DateOfBirth,
             IsActive = c.IsActive,
             RewardPoints = c.RewardPoints,
             TotalOrders = nonCancelledOrders.Count,
-            TotalSpent = nonCancelledOrders.Sum(o => o.GrandTotal.ToDecimal()),
+            TotalSpent = nonCancelledOrders.Sum(o => o.GrandTotal != null ? o.GrandTotal.ToDecimal() : 0m),
             CreatedAtUtc = c.CreatedAtUtc,
-            Addresses = c.Addresses.Select(a => new CustomerAddressDto
-            {
-                Id = a.Id,
-                AddressType = a.AddressType,
-                FullName = a.Address.FullName,
-                Phone = a.Address.Phone,
-                AddressLine1 = a.Address.AddressLine1,
-                AddressLine2 = a.Address.AddressLine2,
-                City = a.Address.City,
-                State = a.Address.State,
-                PostalCode = a.Address.PostalCode,
-                Country = a.Address.Country,
-                IsDefault = a.IsDefault
-            }).ToList()
+            Addresses = (c.Addresses ?? Enumerable.Empty<CustomerAddress>())
+                .Where(a => a != null)
+                .Select(a => new CustomerAddressDto
+                {
+                    Id = a.Id,
+                    AddressType = a.AddressType,
+                    FullName = a.Address?.FullName ?? string.Empty,
+                    Phone = a.Address?.Phone ?? string.Empty,
+                    AddressLine1 = a.Address?.AddressLine1 ?? string.Empty,
+                    AddressLine2 = a.Address?.AddressLine2,
+                    City = a.Address?.City ?? string.Empty,
+                    State = a.Address?.State ?? string.Empty,
+                    PostalCode = a.Address?.PostalCode ?? string.Empty,
+                    Country = a.Address?.Country ?? string.Empty,
+                    IsDefault = a.IsDefault
+                }).ToList()
         };
     }
 }

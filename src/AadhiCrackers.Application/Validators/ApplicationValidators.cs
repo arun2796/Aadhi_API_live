@@ -134,31 +134,6 @@ public class CreateOrderRequestValidator : AbstractValidator<CreateOrderRequest>
     }
 }
 
-public class StockAdjustmentRequestValidator : AbstractValidator<StockAdjustmentRequest>
-{
-    public StockAdjustmentRequestValidator()
-    {
-        RuleFor(x => x.ProductId).NotEmpty();
-        RuleFor(x => x.WarehouseId).NotEmpty();
-        RuleFor(x => x.Reason).NotEmpty().WithMessage("A clear reason for stock adjustment is required.");
-    }
-}
-
-public class CreatePurchaseOrderRequestValidator : AbstractValidator<CreatePurchaseOrderRequest>
-{
-    public CreatePurchaseOrderRequestValidator()
-    {
-        RuleFor(x => x.SupplierId).NotEmpty();
-        RuleFor(x => x.WarehouseId).NotEmpty();
-        RuleFor(x => x.Items).NotEmpty();
-        RuleForEach(x => x.Items).ChildRules(item =>
-        {
-            item.RuleFor(i => i.ProductId).NotEmpty();
-            item.RuleFor(i => i.UnitPrice).GreaterThan(0);
-            item.RuleFor(i => i.Quantity).GreaterThan(0);
-        });
-    }
-}
 
 public class CreateExpenseRequestValidator : AbstractValidator<CreateExpenseRequest>
 {

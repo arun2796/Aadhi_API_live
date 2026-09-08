@@ -17,7 +17,7 @@ using Xunit;
 namespace AadhiCrackers.Infrastructure.Tests;
 
 /// <summary>
-/// Dedicated test suite verifying the 12 Critical Scenarios from Section 11 of Phase 0 Report.
+/// Critical Scenarios verifying direct product stock lifecycle, payment idempotency, outbox, and security.
 /// </summary>
 public class Phase56CriticalScenariosTests : IDisposable
 {
@@ -55,20 +55,10 @@ public class Phase56CriticalScenariosTests : IDisposable
         return (orderService, financeService, reportService, currentUser);
     }
 
-    private async Task<(Product product, Warehouse warehouse, Customer customer)> SeedBaseDataAsync(AadhiDbContext context)
+    private async Task<(Product product, Customer customer)> SeedBaseDataAsync(AadhiDbContext context)
     {
         var category = new Category { Name = "Crackers", Slug = "crackers", IsActive = true };
         context.Categories.Add(category);
-
-        var warehouse = new Warehouse
-        {
-            Code = "WH-MAIN",
-            Name = "Main Depot",
-            Phone = "9876543210",
-            IsActive = true,
-            IsPrimary = true
-        };
-        context.Warehouses.Add(warehouse);
 
         var product = new Product
         {
@@ -84,16 +74,6 @@ public class Phase56CriticalScenariosTests : IDisposable
         };
         context.Products.Add(product);
 
-        var stockItem = new StockItem
-        {
-            ProductId = product.Id,
-            WarehouseId = warehouse.Id,
-            QuantityOnHand = 10,
-            QuantityReserved = 0,
-            ReorderLevel = 2
-        };
-        context.StockItems.Add(stockItem);
-
         var customer = new Customer
         {
             UserId = Guid.NewGuid().ToString(),
@@ -107,7 +87,7 @@ public class Phase56CriticalScenariosTests : IDisposable
         context.Customers.Add(customer);
 
         await context.SaveChangesAsync();
-        return (product, warehouse, customer);
+        return (product, customer);
     }
 
     private sealed class TestCurrentUserService : ICurrentUserService
@@ -134,13 +114,12 @@ public class Phase56CriticalScenariosTests : IDisposable
     public async Task Scenario1_ConcurrentLastUnitOrders_OneSucceeds_OtherFails()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, customer) = await SeedBaseDataAsync(context);
+        var (product, _) = await SeedBaseDataAsync(context);
         var (orderService, _, _, _) = CreateServices(context);
 
         // 1. Order 1 takes all 10 available units
         var order1 = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 10 } }
@@ -151,7 +130,6 @@ public class Phase56CriticalScenariosTests : IDisposable
         await Assert.ThrowsAsync<InsufficientStockException>(() =>
             orderService.CreateOrderAsync(new CreateOrderRequest
             {
-                WarehouseId = warehouse.Id,
                 PaymentMethod = PaymentMethod.COD,
                 ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
                 Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }
@@ -159,25 +137,25 @@ public class Phase56CriticalScenariosTests : IDisposable
     }
     #endregion
 
-    #region Scenario 2: Cancel releases reservation only (on-hand unchanged)
+    #region Scenario 2: Cancel releases reservation only (stock quantity unchanged)
     [Fact]
     public async Task Scenario2_CancelOrder_ReleasesReservationOnly()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
+        var (product, _) = await SeedBaseDataAsync(context);
         var (orderService, _, _, _) = CreateServices(context);
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 4 } }
         });
 
-        var stockAfterOrder = await context.StockItems.FirstAsync(s => s.ProductId == product.Id);
-        Assert.Equal(10, stockAfterOrder.QuantityOnHand);
-        Assert.Equal(4, stockAfterOrder.QuantityReserved);
+        var stockAfterOrder = await context.Products.FirstAsync(p => p.Id == product.Id);
+        Assert.Equal(10, stockAfterOrder.StockQuantity);
+        Assert.Equal(4, stockAfterOrder.ReservedQuantity);
+        Assert.Equal(6, stockAfterOrder.AvailableQuantity);
 
         await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest
         {
@@ -185,23 +163,23 @@ public class Phase56CriticalScenariosTests : IDisposable
             Reason = "Customer cancelled before packing"
         });
 
-        var stockAfterCancel = await context.StockItems.FirstAsync(s => s.ProductId == product.Id);
-        Assert.Equal(10, stockAfterCancel.QuantityOnHand);    // On-hand remains 10
-        Assert.Equal(0, stockAfterCancel.QuantityReserved);  // Reservation released to 0
+        var stockAfterCancel = await context.Products.FirstAsync(p => p.Id == product.Id);
+        Assert.Equal(10, stockAfterCancel.StockQuantity);    // Total stock remains 10
+        Assert.Equal(0, stockAfterCancel.ReservedQuantity);  // Reservation released to 0
+        Assert.Equal(10, stockAfterCancel.AvailableQuantity);
     }
     #endregion
 
-    #region Scenario 3: Ship: deduct once, exactly one Sale movement
+    #region Scenario 3: Ship: deducts direct product stock
     [Fact]
-    public async Task Scenario3_Shipment_DeductsOnHandOnce_WritesExactlyOneSaleMovement()
+    public async Task Scenario3_Shipment_DeductsDirectProductStock()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
+        var (product, _) = await SeedBaseDataAsync(context);
         var (orderService, _, _, _) = CreateServices(context);
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 3 } }
@@ -212,135 +190,10 @@ public class Phase56CriticalScenariosTests : IDisposable
         await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Packed });
         await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Shipped });
 
-        var stock = await context.StockItems.FirstAsync(s => s.ProductId == product.Id);
-        Assert.Equal(7, stock.QuantityOnHand);    // 10 - 3 = 7
-        Assert.Equal(0, stock.QuantityReserved);  // Reserved cleared
-
-        var saleMovements = await context.StockMovements
-            .Where(m => m.ProductId == product.Id && m.MovementType == StockMovementType.Sale)
-            .ToListAsync();
-
-        Assert.Single(saleMovements); // Exactly ONE sale movement
-        Assert.Equal(-3, saleMovements[0].QuantityChange);
-    }
-    #endregion
-
-    #region Scenario 4: No auto-restock on return request
-    [Fact]
-    public async Task Scenario4_NoAutoRestock_OnReturnRequest()
-    {
-        using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
-        var (orderService, _, _, _) = CreateServices(context);
-
-        var order = await orderService.CreateOrderAsync(new CreateOrderRequest
-        {
-            WarehouseId = warehouse.Id,
-            PaymentMethod = PaymentMethod.COD,
-            ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
-            Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 5 } }
-        });
-
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Confirmed });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Processing });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Packed });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Shipped });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Delivered });
-
-        var stockAfterDelivery = await context.StockItems.FirstAsync(s => s.ProductId == product.Id);
-        Assert.Equal(5, stockAfterDelivery.QuantityOnHand);
-
-        // Customer requests return of 2 units
-        var returnOrder = await orderService.CreateReturnOrderAsync(new CreateReturnOrderRequest
-        {
-            OrderId = order.Id,
-            Reason = "Defective box",
-            Items = new List<CreateReturnOrderItemRequest>
-            {
-                new() { ProductId = product.Id, Quantity = 2, Reason = "Defective" }
-            }
-        });
-
-        // Assert on-hand is STILL 5 (NO auto-restock before inspection)
-        var stockAfterReturnRequest = await context.StockItems.FirstAsync(s => s.ProductId == product.Id);
-        Assert.Equal(5, stockAfterReturnRequest.QuantityOnHand);
-    }
-    #endregion
-
-    #region Scenario 5 & 6: Sellable / Damaged inspection movements
-    [Fact]
-    public async Task Scenario5And6_ReturnInspection_SellableRestocked_DamagedWrittenOff()
-    {
-        using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
-        var (orderService, _, _, _) = CreateServices(context);
-
-        var order = await orderService.CreateOrderAsync(new CreateOrderRequest
-        {
-            WarehouseId = warehouse.Id,
-            PaymentMethod = PaymentMethod.COD,
-            ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
-            Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 6 } }
-        });
-
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Confirmed });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Processing });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Packed });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Shipped });
-        await orderService.UpdateOrderStatusAsync(order.Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Delivered });
-
-        var returnOrder = await orderService.CreateReturnOrderAsync(new CreateReturnOrderRequest
-        {
-            OrderId = order.Id,
-            Reason = "Return 4 units",
-            Items = new List<CreateReturnOrderItemRequest>
-            {
-                new() { ProductId = product.Id, Quantity = 4, Reason = "Mixed condition" }
-            }
-        });
-
-        await orderService.ApproveReturnOrderAsync(returnOrder.Id);
-        await orderService.ReceiveReturnOrderAsync(returnOrder.Id);
-
-        // Inspect: 3 units sellable, 1 unit damaged
-        await orderService.InspectReturnOrderAsync(returnOrder.Id, new InspectReturnOrderRequest
-        {
-            InspectionNotes = "3 good boxes, 1 broken sparkler",
-            ItemInspections = new List<InspectReturnItemRequest>
-            {
-                new()
-                {
-                    ProductId = product.Id,
-                    Quantity = 3,
-                    IsSellable = true,
-                    ConditionNotes = "Good box"
-                },
-                new()
-                {
-                    ProductId = product.Id,
-                    Quantity = 1,
-                    IsSellable = false,
-                    ConditionNotes = "Broken sparkler"
-                }
-            }
-        });
-
-        var finalStock = await context.StockItems.FirstAsync(s => s.ProductId == product.Id);
-        // Initial was 10, shipped 6 = 4 remaining. 3 sellable returned -> 4 + 3 = 7
-        Assert.Equal(7, finalStock.QuantityOnHand);
-
-        // Verify ledger entries
-        var returnMovements = await context.StockMovements
-            .Where(m => m.ProductId == product.Id && m.MovementType == StockMovementType.Return)
-            .ToListAsync();
-        Assert.Single(returnMovements);
-        Assert.Equal(3, returnMovements[0].QuantityChange);
-
-        var damageMovements = await context.StockMovements
-            .Where(m => m.ProductId == product.Id && m.MovementType == StockMovementType.Damage)
-            .ToListAsync();
-        Assert.Single(damageMovements);
-        Assert.Equal(0, damageMovements[0].QuantityChange); // Damaged units are logged without inflating on-hand stock
+        var updatedProduct = await context.Products.FirstAsync(p => p.Id == product.Id);
+        Assert.Equal(7, updatedProduct.StockQuantity);    // 10 - 3 = 7
+        Assert.Equal(0, updatedProduct.ReservedQuantity); // Reserved cleared
+        Assert.Equal(7, updatedProduct.AvailableQuantity);
     }
     #endregion
 
@@ -349,12 +202,11 @@ public class Phase56CriticalScenariosTests : IDisposable
     public async Task Scenario7_PaymentProof_DuplicateVerification_IsIdempotent()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
+        var (product, _) = await SeedBaseDataAsync(context);
         var (orderService, _, _, _) = CreateServices(context);
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 2 } }
@@ -382,69 +234,16 @@ public class Phase56CriticalScenariosTests : IDisposable
     }
     #endregion
 
-    #region Scenario 8: Duplicate refund rejected (Idempotency Key)
-    [Fact]
-    public async Task Scenario8_DuplicateRefund_WithSameIdempotencyKey_Rejected()
-    {
-        using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
-        var (orderService, financeService, _, _) = CreateServices(context);
-
-        var order = await orderService.CreateOrderAsync(new CreateOrderRequest
-        {
-            WarehouseId = warehouse.Id,
-            PaymentMethod = PaymentMethod.UPI,
-            ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
-            Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 2 } }
-        });
-
-        await orderService.SubmitPaymentProofAsync(order.Id, new SubmitPaymentProofRequest
-        {
-            UtrNumber = "REF-UTR-8888",
-            Notes = "UPI Transfer"
-        });
-        await orderService.VerifyPaymentAsync(order.Id, new VerifyPaymentRequest { VerifiedUtrNumber = "REF-UTR-8888" });
-
-        var idempotencyKey = "IDEMP-REFUND-999";
-
-        // First refund succeeds
-        var refund1 = await financeService.CreateRefundAsync(new CreateRefundRequest
-        {
-            OrderId = order.Id,
-            Amount = 200m,
-            Reason = "Return partial refund",
-            Method = PaymentMethod.UPI,
-            IdempotencyKey = idempotencyKey
-        });
-        Assert.NotNull(refund1);
-
-        // Second call with same idempotency key returns the existing refund without double debiting
-        var refund2 = await financeService.CreateRefundAsync(new CreateRefundRequest
-        {
-            OrderId = order.Id,
-            Amount = 200m,
-            Reason = "Duplicate refund request",
-            Method = PaymentMethod.UPI,
-            IdempotencyKey = idempotencyKey
-        });
-        Assert.Equal(refund1.Id, refund2.Id);
-
-        var totalRefunds = await context.Refunds.CountAsync(r => r.OrderId == order.Id);
-        Assert.Equal(1, totalRefunds);
-    }
-    #endregion
-
     #region Scenario 9: Outbox persistence in same transaction with Order
     [Fact]
     public async Task Scenario9_OutboxEvent_PersistedInTransactionWithOrder()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
+        var (product, _) = await SeedBaseDataAsync(context);
         var (orderService, _, _, _) = CreateServices(context);
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }
@@ -499,20 +298,18 @@ public class Phase56CriticalScenariosTests : IDisposable
     public async Task Scenario11_DashboardKPIs_And_SalesReport_ReconcileWithDatabase()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, _) = await SeedBaseDataAsync(context);
+        var (product, _) = await SeedBaseDataAsync(context);
         var (orderService, _, reportService, _) = CreateServices(context);
 
         // Create 2 orders
         var order1 = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 2 } }
         });
         var order2 = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 3 } }
@@ -534,7 +331,7 @@ public class Phase56CriticalScenariosTests : IDisposable
     public async Task Scenario12_Customer_CannotQueryAnotherCustomersOrders()
     {
         using var context = new AadhiDbContext(_options);
-        var (product, warehouse, customerA) = await SeedBaseDataAsync(context);
+        var (product, customerA) = await SeedBaseDataAsync(context);
 
         var customerB = new Customer
         {
@@ -553,7 +350,6 @@ public class Phase56CriticalScenariosTests : IDisposable
         var (orderServiceA, _, _, _) = CreateServices(context, customerA.UserId, "Customer", customerA.Email);
         var orderA = await orderServiceA.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             ShippingAddress = new Address { FullName = "Suresh Raina", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }

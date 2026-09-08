@@ -17,14 +17,6 @@ public interface IApplicationDbContext
     DbSet<Order> Orders { get; }
     DbSet<OrderItem> OrderItems { get; }
     DbSet<OrderStatusHistory> OrderStatusHistories { get; }
-    DbSet<StockItem> StockItems { get; }
-    DbSet<StockMovement> StockMovements { get; }
-    DbSet<Warehouse> Warehouses { get; }
-    DbSet<Supplier> Suppliers { get; }
-    DbSet<PurchaseOrder> PurchaseOrders { get; }
-    DbSet<PurchaseOrderItem> PurchaseOrderItems { get; }
-    DbSet<GoodsReceipt> GoodsReceipts { get; }
-    DbSet<GoodsReceiptItem> GoodsReceiptItems { get; }
     DbSet<Invoice> Invoices { get; }
     DbSet<Payment> Payments { get; }
     DbSet<Expense> Expenses { get; }
@@ -35,16 +27,8 @@ public interface IApplicationDbContext
     DbSet<LoginHistory> LoginHistories { get; }
     DbSet<RateLimitLog> RateLimitLogs { get; }
     DbSet<ProductCategory> ProductCategories { get; }
-    DbSet<ProductVariant> ProductVariants { get; }
-    DbSet<GiftBoxItem> GiftBoxItems { get; }
     DbSet<ProductReview> ProductReviews { get; }
-    DbSet<Refund> Refunds { get; }
-    DbSet<SupplierBill> SupplierBills { get; }
-    DbSet<ReturnOrder> ReturnOrders { get; }
-    DbSet<ReturnOrderItem> ReturnOrderItems { get; }
     DbSet<PromotionRedemption> PromotionRedemptions { get; }
-    DbSet<Quote> Quotes { get; }
-    DbSet<QuoteItem> QuoteItems { get; }
     DbSet<HomepageBanner> HomepageBanners { get; }
     DbSet<OtpVerification> OtpVerifications { get; }
     DbSet<WishlistItem> WishlistItems { get; }
@@ -99,7 +83,6 @@ public interface INotificationService
     Task SendOrderStatusUpdatedAsync(Order order, CancellationToken cancellationToken = default);
     Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default);
     Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default);
-    Task SendReturnStatusUpdatedAsync(ReturnOrder returnOrder, CancellationToken cancellationToken = default);
     Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default);
     Task SendPasswordResetOtpAsync(string recipient, string otpCode, CancellationToken cancellationToken = default);
 }

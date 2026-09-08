@@ -120,12 +120,6 @@ public class NotificationService : INotificationService
         return Task.CompletedTask;
     }
 
-    public Task SendReturnStatusUpdatedAsync(ReturnOrder returnOrder, CancellationToken cancellationToken = default)
-    {
-        _logger.LogInformation("📧 [Notification Service] Return order update dispatched for Return #{ReturnNumber}, Status: {Status}",
-            returnOrder.ReturnNumber, returnOrder.Status);
-        return Task.CompletedTask;
-    }
 
     public Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default)
     {

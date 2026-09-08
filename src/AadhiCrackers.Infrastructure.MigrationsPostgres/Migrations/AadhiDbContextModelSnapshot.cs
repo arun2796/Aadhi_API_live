@@ -542,46 +542,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.ToTable("Expenses");
                 });
 
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.GiftBoxItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ComponentProductId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid>("ParentProductId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ComponentProductId");
-
-                    b.HasIndex("ParentProductId", "ComponentProductId")
-                        .IsUnique();
-
-                    b.ToTable("GiftBoxItems");
-                });
-
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.GoodsReceipt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1594,62 +1554,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.ToTable("ProductReviews");
                 });
 
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductVariant", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("CostPrice")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(150)
-                        .HasColumnType("character varying(150)");
-
-                    b.Property<long>("Price")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("ProductId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("SKU")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("StockQuantity")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProductId");
-
-                    b.HasIndex("SKU")
-                        .IsUnique();
-
-                    b.ToTable("ProductVariants");
-                });
-
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.Promotion", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1926,126 +1830,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.HasIndex("PurchaseOrderId");
 
                     b.ToTable("PurchaseOrderItems");
-                });
-
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.Quote", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("ConvertedOrderId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("CustomerId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("Discount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("ExpiryDateUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long>("GrandTotal")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("bigint");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("text");
-
-                    b.Property<string>("QuoteNumber")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<long>("Subtotal")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("Tax")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CustomerId");
-
-                    b.HasIndex("QuoteNumber")
-                        .IsUnique();
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("Quotes");
-                });
-
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.QuoteItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<decimal>("DiscountPercentage")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<long>("LineTotal")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("ProductId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("QuoteId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("UnitPrice")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProductId");
-
-                    b.HasIndex("QuoteId");
-
-                    b.ToTable("QuoteItems");
                 });
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.RateLimitLog", b =>
@@ -2979,25 +2763,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.Navigation("Product");
                 });
 
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.GiftBoxItem", b =>
-                {
-                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "ComponentProduct")
-                        .WithMany()
-                        .HasForeignKey("ComponentProductId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "ParentProduct")
-                        .WithMany("BundleComponents")
-                        .HasForeignKey("ParentProductId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("ComponentProduct");
-
-                    b.Navigation("ParentProduct");
-                });
-
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.GoodsReceipt", b =>
                 {
                     b.HasOne("AadhiCrackers.Domain.Entities.PurchaseOrder", "PurchaseOrder")
@@ -3280,17 +3045,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.Navigation("Product");
                 });
 
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductVariant", b =>
-                {
-                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "Product")
-                        .WithMany("Variants")
-                        .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Product");
-                });
-
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.PromotionRedemption", b =>
                 {
                     b.HasOne("AadhiCrackers.Domain.Entities.Customer", "Customer")
@@ -3354,36 +3108,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("PurchaseOrder");
-                });
-
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.Quote", b =>
-                {
-                    b.HasOne("AadhiCrackers.Domain.Entities.Customer", "Customer")
-                        .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Customer");
-                });
-
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.QuoteItem", b =>
-                {
-                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "Product")
-                        .WithMany()
-                        .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("AadhiCrackers.Domain.Entities.Quote", "Quote")
-                        .WithMany("Items")
-                        .HasForeignKey("QuoteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Product");
-
-                    b.Navigation("Quote");
                 });
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.Refund", b =>
@@ -3616,15 +3340,11 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.Product", b =>
                 {
-                    b.Navigation("BundleComponents");
-
                     b.Navigation("Images");
 
                     b.Navigation("ProductCategories");
 
                     b.Navigation("Reviews");
-
-                    b.Navigation("Variants");
                 });
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.Promotion", b =>
@@ -3636,11 +3356,6 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                 {
                     b.Navigation("GoodsReceipts");
 
-                    b.Navigation("Items");
-                });
-
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.Quote", b =>
-                {
                     b.Navigation("Items");
                 });
 

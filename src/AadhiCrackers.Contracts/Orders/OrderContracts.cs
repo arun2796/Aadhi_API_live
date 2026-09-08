@@ -133,7 +133,6 @@ public class CreateOrderItemRequest
 
 public class CreateOrderRequest
 {
-    public Guid? WarehouseId { get; set; }
     public Address ShippingAddress { get; set; } = new();
     public Address? BillingAddress { get; set; }
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.UPI;
@@ -199,72 +198,6 @@ public class OrderTrackingDto
     public decimal GrandTotal { get; set; }
 }
 
-public class ReturnOrderItemDto
-{
-    public Guid Id { get; set; }
-    public Guid ProductId { get; set; }
-    public string ProductName { get; set; } = string.Empty;
-    public string SKU { get; set; } = string.Empty;
-    public int Quantity { get; set; }
-    public decimal UnitPrice { get; set; }
-    public decimal LineTotal => UnitPrice * Quantity;
-    public bool IsDamaged { get; set; }
-    public string? ConditionNotes { get; set; }
-}
-
-public class ReturnOrderDto
-{
-    public Guid Id { get; set; }
-    public string ReturnNumber { get; set; } = string.Empty;
-    public Guid OrderId { get; set; }
-    public string OrderNumber { get; set; } = string.Empty;
-    public Guid CustomerId { get; set; }
-    public string CustomerName { get; set; } = string.Empty;
-    public string Reason { get; set; } = string.Empty;
-    public string Status { get; set; } = "Requested";
-    public string? InspectionNotes { get; set; }
-    public bool IsSellable { get; set; }
-    public decimal RefundAmount { get; set; }
-    public DateTime RequestedAtUtc { get; set; }
-    public DateTime? InspectedAtUtc { get; set; }
-    public List<ReturnOrderItemDto> Items { get; set; } = new();
-}
-
-public class CreateReturnOrderItemRequest
-{
-    public Guid ProductId { get; set; }
-    public Guid? OrderItemId { get; set; } // alternative to ProductId — resolved to the order line
-    public int Quantity { get; set; }
-    public string? Reason { get; set; }
-}
-
-public class CreateReturnOrderRequest
-{
-    public Guid OrderId { get; set; }
-    public string Reason { get; set; } = string.Empty;
-    public string? Comments { get; set; }
-    public List<CreateReturnOrderItemRequest> Items { get; set; } = new();
-}
-
-public class InspectReturnItemRequest
-{
-    public Guid ProductId { get; set; }
-    public int Quantity { get; set; }
-    public bool IsSellable { get; set; }
-    public string? ConditionNotes { get; set; }
-}
-
-public class InspectReturnOrderRequest
-{
-    public string? InspectionNotes { get; set; }
-    public List<InspectReturnItemRequest> ItemInspections { get; set; } = new();
-}
-
-public class RejectReturnOrderRequest
-{
-    public string? Reason { get; set; }
-}
-
 public class DeliveryOptionDto
 {
     public string Code { get; set; } = string.Empty; // standard | express
@@ -272,43 +205,4 @@ public class DeliveryOptionDto
     public decimal Charge { get; set; }
     public int EtaMinDays { get; set; }
     public int EtaMaxDays { get; set; }
-}
-
-// ---- Customer-facing return visibility (GET /returns/my) ----
-
-public class CustomerReturnItemDto
-{
-    public string ProductName { get; set; } = string.Empty;
-    public int Quantity { get; set; }
-    public decimal UnitPrice { get; set; }
-}
-
-public class CustomerReturnRefundDto
-{
-    public string RefundNumber { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-    public decimal Amount { get; set; }
-    public string Method { get; set; } = string.Empty;
-    public DateTime? ProcessedAt { get; set; }
-}
-
-public class CustomerReturnTimelineEntryDto
-{
-    public string Status { get; set; } = string.Empty;
-    public DateTime? Date { get; set; }
-    public bool Completed { get; set; }
-}
-
-public class CustomerReturnDto
-{
-    public Guid Id { get; set; }
-    public string ReturnNumber { get; set; } = string.Empty;
-    public Guid OrderId { get; set; }
-    public string OrderNumber { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-    public string Reason { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; }
-    public List<CustomerReturnItemDto> Items { get; set; } = new();
-    public CustomerReturnRefundDto? Refund { get; set; }
-    public List<CustomerReturnTimelineEntryDto> Timeline { get; set; } = new();
 }

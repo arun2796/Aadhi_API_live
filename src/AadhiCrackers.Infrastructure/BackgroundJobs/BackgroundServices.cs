@@ -129,30 +129,7 @@ public class OutboxProcessorBackgroundService : BackgroundService
                                             }
                                             break;
                                         }
-                                    case "ReturnRequested":
-                                    case "ReturnApproved":
-                                    case "ReturnInspected":
-                                        {
-                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
-                                            if (doc.RootElement.TryGetProperty("ReturnId", out var returnIdProp) &&
-                                                Guid.TryParse(returnIdProp.GetString(), out var returnId))
-                                            {
-                                                var returnOrder = await context.ReturnOrders
-                                                    .Include(r => r.Customer)
-                                                    .Include(r => r.Items)
-                                                    .FirstOrDefaultAsync(r => r.Id == returnId, stoppingToken);
-
-                                                if (returnOrder != null)
-                                                {
-                                                    await notificationService.SendReturnStatusUpdatedAsync(returnOrder, stoppingToken);
-                                                }
-                                            }
-                                            break;
-                                        }
                                     case "PaymentRecorded":
-                                    case "RefundProcessed":
-                                    case "GoodsReceiptCreated":
-                                    case "InventoryAdjusted":
                                     case "AuditLogCreated":
                                         {
                                             _logger.LogInformation("Domain ledger outbox event [{Id}] Type={Type} successfully processed.", msg.Id, msg.Type);

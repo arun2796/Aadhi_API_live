@@ -59,19 +59,5 @@ public class ValidationTests
         result.IsValid.Should().BeFalse();
     }
 
-    [Fact]
-    public void StockAdjustmentValidator_WithoutReason_ShouldFail()
-    {
-        var validator = new StockAdjustmentRequestValidator();
-        var req = new StockAdjustmentRequest
-        {
-            ProductId = Guid.NewGuid(),
-            WarehouseId = Guid.NewGuid(),
-            AdjustedQuantity = 10,
-            Reason = ""
-        };
-        var result = validator.Validate(req);
-        result.IsValid.Should().BeFalse();
-        result.Errors.Should().Contain(e => e.PropertyName == "Reason");
-    }
+
 }

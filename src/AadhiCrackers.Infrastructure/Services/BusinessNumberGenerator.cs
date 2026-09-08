@@ -43,72 +43,12 @@ public class BusinessNumberGenerator : IBusinessNumberGenerator
             cancellationToken);
     }
 
-    public async Task<string> GenerateRefundNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"REF-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.Refunds.Where(r => r.RefundNumber.StartsWith(prefix)).Select(r => r.RefundNumber),
-            prefix,
-            cancellationToken);
-    }
-
-    public async Task<string> GenerateReturnNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"RET-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.ReturnOrders.Where(r => r.ReturnNumber.StartsWith(prefix)).Select(r => r.ReturnNumber),
-            prefix,
-            cancellationToken);
-    }
-
-    public async Task<string> GeneratePurchaseOrderNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"PO-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.PurchaseOrders.Where(p => p.PoNumber.StartsWith(prefix)).Select(p => p.PoNumber),
-            prefix,
-            cancellationToken);
-    }
-
-    public async Task<string> GenerateGoodsReceiptNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"GRN-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.GoodsReceipts.Where(g => g.ReceiptNumber.StartsWith(prefix)).Select(g => g.ReceiptNumber),
-            prefix,
-            cancellationToken);
-    }
-
     public async Task<string> GenerateExpenseNumberAsync(CancellationToken cancellationToken = default)
     {
         var year = DateTime.UtcNow.Year;
         var prefix = $"EXP-{year}-";
         return await GenerateNextNumberAsync(
             _context.Expenses.Where(e => e.ExpenseNumber.StartsWith(prefix)).Select(e => e.ExpenseNumber),
-            prefix,
-            cancellationToken);
-    }
-
-    public async Task<string> GenerateSupplierBillNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"BIL-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.SupplierBills.Where(b => b.BillNumber.StartsWith(prefix)).Select(b => b.BillNumber),
-            prefix,
-            cancellationToken);
-    }
-
-    public async Task<string> GenerateQuoteNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"QUO-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.Quotes.Where(q => q.QuoteNumber.StartsWith(prefix)).Select(q => q.QuoteNumber),
             prefix,
             cancellationToken);
     }

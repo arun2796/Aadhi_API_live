@@ -40,8 +40,6 @@ public class Order : AggregateRoot<Guid>
     public string OrderNumber { get; set; } = string.Empty; // e.g. ORD-2026-000001
     public Guid CustomerId { get; set; }
     public Customer Customer { get; set; } = null!;
-    public Guid? WarehouseId { get; set; }
-    public Warehouse? Warehouse { get; set; }
 
     public OrderStatus OrderStatus { get; set; } = OrderStatus.Pending;
     public PaymentStatus PaymentStatus { get; set; } = PaymentStatus.Pending;
@@ -88,8 +86,8 @@ public class Order : AggregateRoot<Guid>
             OrderStatus.Processing => nextStatus is OrderStatus.Packed or OrderStatus.Cancelled,
             OrderStatus.Packed => nextStatus is OrderStatus.Shipped or OrderStatus.Cancelled,
             OrderStatus.Shipped => nextStatus is OrderStatus.OutForDelivery or OrderStatus.Delivered,
-            OrderStatus.OutForDelivery => nextStatus is OrderStatus.Delivered or OrderStatus.Returned,
-            OrderStatus.Delivered => nextStatus is OrderStatus.Returned,
+            OrderStatus.OutForDelivery => nextStatus is OrderStatus.Delivered,
+            OrderStatus.Delivered => false,
             OrderStatus.Cancelled => false,
             OrderStatus.Returned => false,
             _ => false
@@ -122,6 +120,5 @@ public class Order : AggregateRoot<Guid>
         if (newStatus == OrderStatus.Packed) FulfillmentStatus = FulfillmentStatus.Packed;
         else if (newStatus == OrderStatus.Shipped) FulfillmentStatus = FulfillmentStatus.Shipped;
         else if (newStatus == OrderStatus.Delivered) FulfillmentStatus = FulfillmentStatus.Delivered;
-        else if (newStatus == OrderStatus.Returned) FulfillmentStatus = FulfillmentStatus.Returned;
     }
 }

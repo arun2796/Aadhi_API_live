@@ -76,22 +76,6 @@ public static class DatabaseSeeder
                 }
             }
 
-            // 3. Seed Main Warehouse (required for stock operations)
-            var mainWarehouse = await context.Warehouses.FirstOrDefaultAsync(w => w.Code == "WH-SVK-01");
-            if (mainWarehouse == null)
-            {
-                mainWarehouse = new Warehouse
-                {
-                    Code = "WH-SVK-01",
-                    Name = "Main Central Warehouse - Sivakasi",
-                    Address = "45, Bypass Road, Sivakasi, Tamil Nadu 626123",
-                    Phone = "+91 4562 278900",
-                    IsActive = true,
-                    IsPrimary = true
-                };
-                context.Warehouses.Add(mainWarehouse);
-                await context.SaveChangesAsync();
-            }
 
             // 4. Seed System Settings (idempotent — inserts missing keys, never overwrites existing values)
             var settingDefaults = new SystemSetting[]
@@ -165,8 +149,6 @@ public static class DatabaseSeeder
         AadhiDbContext context,
         UserManager<ApplicationUser> userManager)
     {
-        var mainWarehouse = await context.Warehouses.FirstAsync(w => w.Code == "WH-SVK-01");
-
         // D1. Seed Sample Customer User
         var customerEmail = "customer@aadhicrackers.com";
             var customerUser = await userManager.FindByEmailAsync(customerEmail);
@@ -228,41 +210,6 @@ public static class DatabaseSeeder
                 customerEntity = await context.Customers.FirstOrDefaultAsync(c => c.Email == customerEmail);
             }
 
-            // D2. Seed Demo Hub Warehouse (main warehouse is seeded in essentials)
-            var hubWarehouse = await context.Warehouses.FirstOrDefaultAsync(w => w.Code == "WH-CBE-01");
-            if (hubWarehouse == null)
-            {
-                hubWarehouse = new Warehouse
-                {
-                    Code = "WH-CBE-01",
-                    Name = "Hub Distribution Center - Coimbatore",
-                    Address = "12, Avinashi Road, Peelamedu, Coimbatore 641004",
-                    Phone = "+91 422 2567890",
-                    IsActive = true,
-                    IsPrimary = false
-                };
-                context.Warehouses.Add(hubWarehouse);
-                await context.SaveChangesAsync();
-            }
-
-            // D3. Seed Demo Suppliers
-            var supplier = await context.Suppliers.FirstOrDefaultAsync(s => s.Code == "SUP-001");
-            if (supplier == null)
-            {
-                supplier = new Supplier
-                {
-                    Code = "SUP-001",
-                    Name = "Sri Krishna Fireworks Ltd",
-                    ContactPerson = "S. Murugan",
-                    Email = "supply@srikrishnafireworks.com",
-                    Phone = "9843210987",
-                    Address = "Industrial Estate, Sivakasi",
-                    GstNumber = "33AAACS1234F1Z5",
-                    IsActive = true
-                };
-                context.Suppliers.Add(supplier);
-                await context.SaveChangesAsync();
-            }
 
             // D4. Seed Demo Brands
             var aadhiBrand = await context.Brands.FirstOrDefaultAsync(b => b.Slug == "aadhi-crackers");
@@ -729,28 +676,7 @@ public static class DatabaseSeeder
 
                     context.Products.Add(p);
 
-                    // Warehouse stock and ledger
-                    context.StockItems.Add(new StockItem
-                    {
-                        ProductId = p.Id,
-                        WarehouseId = mainWarehouse.Id,
-                        QuantityOnHand = p.StockQuantity,
-                        QuantityReserved = p.ReservedQuantity,
-                        ReorderLevel = p.ReorderLevel
-                    });
 
-                    context.StockMovements.Add(new StockMovement
-                    {
-                        ProductId = p.Id,
-                        WarehouseId = mainWarehouse.Id,
-                        MovementType = StockMovementType.OpeningStock,
-                        QuantityChange = p.StockQuantity,
-                        QuantityBefore = 0,
-                        QuantityAfter = p.StockQuantity,
-                        ReferenceType = "SeedOpeningStock",
-                        Reason = "Initial Opening Stock during database provisioning",
-                        CreatedBy = "System"
-                    });
                 }
 
                 await context.SaveChangesAsync();
@@ -777,7 +703,6 @@ public static class DatabaseSeeder
                         {
                             OrderNumber = s.OrderNum,
                             CustomerId = customerEntity.Id,
-                            WarehouseId = mainWarehouse.Id,
                             PaymentMethod = s.Method,
                             PaymentStatus = s.Payment,
                             OrderStatus = s.Status,

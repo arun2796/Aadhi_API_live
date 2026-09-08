@@ -13,15 +13,12 @@ public static class DependencyInjection
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<ICatalogService, CatalogService>();
         services.AddScoped<IOrderService, OrderService>();
-        services.AddScoped<IInventoryService, InventoryService>();
-        services.AddScoped<IPurchaseService, PurchaseService>();
         services.AddScoped<IFinanceService, FinanceService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<ISettingsService, SettingsService>();
         services.AddScoped<ICartService, CartService>();
         services.AddScoped<ICustomerService, CustomerService>();
         services.AddScoped<IPromotionService, PromotionService>();
-        services.AddScoped<IQuoteService, QuoteService>();
         services.AddScoped<IEnquiryService, EnquiryService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IBannerService, BannerService>();

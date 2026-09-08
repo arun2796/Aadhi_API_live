@@ -20,14 +20,6 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<OrderStatusHistory> OrderStatusHistories => Set<OrderStatusHistory>();
-    public DbSet<StockItem> StockItems => Set<StockItem>();
-    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
-    public DbSet<Warehouse> Warehouses => Set<Warehouse>();
-    public DbSet<Supplier> Suppliers => Set<Supplier>();
-    public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
-    public DbSet<PurchaseOrderItem> PurchaseOrderItems => Set<PurchaseOrderItem>();
-    public DbSet<GoodsReceipt> GoodsReceipts => Set<GoodsReceipt>();
-    public DbSet<GoodsReceiptItem> GoodsReceiptItems => Set<GoodsReceiptItem>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Expense> Expenses => Set<Expense>();
@@ -38,16 +30,8 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<LoginHistory> LoginHistories => Set<LoginHistory>();
     public DbSet<RateLimitLog> RateLimitLogs => Set<RateLimitLog>();
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
-    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
-    public DbSet<GiftBoxItem> GiftBoxItems => Set<GiftBoxItem>();
     public DbSet<ProductReview> ProductReviews => Set<ProductReview>();
-    public DbSet<Refund> Refunds => Set<Refund>();
-    public DbSet<SupplierBill> SupplierBills => Set<SupplierBill>();
-    public DbSet<ReturnOrder> ReturnOrders => Set<ReturnOrder>();
-    public DbSet<ReturnOrderItem> ReturnOrderItems => Set<ReturnOrderItem>();
     public DbSet<PromotionRedemption> PromotionRedemptions => Set<PromotionRedemption>();
-    public DbSet<Quote> Quotes => Set<Quote>();
-    public DbSet<QuoteItem> QuoteItems => Set<QuoteItem>();
     public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
     public DbSet<OtpVerification> OtpVerifications => Set<OtpVerification>();
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
@@ -234,42 +218,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(h => h.ChangedAtUtc);
         });
 
-        // Warehouse Configuration
-        builder.Entity<Warehouse>(b =>
-        {
-            b.HasKey(w => w.Id);
-            b.HasIndex(w => w.Code).IsUnique();
-            b.Property(w => w.Code).IsRequired().HasMaxLength(50);
-            b.Property(w => w.Name).IsRequired().HasMaxLength(150);
-        });
 
-        // StockItem Configuration
-        builder.Entity<StockItem>(b =>
-        {
-            b.HasKey(s => s.Id);
-            b.HasIndex(s => new { s.ProductId, s.WarehouseId }).IsUnique();
-            b.Property(s => s.RowVersion).IsConcurrencyToken();
-
-            b.HasOne(s => s.Product)
-                .WithMany()
-                .HasForeignKey(s => s.ProductId)
-                .OnDelete(DeleteBehavior.Restrict);
-
-            b.HasOne(s => s.Warehouse)
-                .WithMany(w => w.StockItems)
-                .HasForeignKey(s => s.WarehouseId)
-                .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // StockMovement Configuration
-        builder.Entity<StockMovement>(b =>
-        {
-            b.HasKey(m => m.Id);
-            b.HasIndex(m => m.ProductId);
-            b.HasIndex(m => m.WarehouseId);
-            b.HasIndex(m => m.CreatedAtUtc);
-            b.Property(m => m.Reason).IsRequired().HasMaxLength(250);
-        });
 
         // ProductCategory Configuration
         builder.Entity<ProductCategory>(b =>
@@ -287,37 +236,6 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ProductVariant Configuration
-        builder.Entity<ProductVariant>(b =>
-        {
-            b.HasKey(pv => pv.Id);
-            b.HasIndex(pv => pv.SKU).IsUnique();
-            b.Property(pv => pv.SKU).IsRequired().HasMaxLength(50);
-            b.Property(pv => pv.Name).IsRequired().HasMaxLength(150);
-
-            b.HasOne(pv => pv.Product)
-                .WithMany(p => p.Variants)
-                .HasForeignKey(pv => pv.ProductId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        // GiftBoxItem Configuration
-        builder.Entity<GiftBoxItem>(b =>
-        {
-            b.HasKey(g => g.Id);
-            b.HasIndex(g => new { g.ParentProductId, g.ComponentProductId }).IsUnique();
-
-            b.HasOne(g => g.ParentProduct)
-                .WithMany(p => p.BundleComponents)
-                .HasForeignKey(g => g.ParentProductId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            b.HasOne(g => g.ComponentProduct)
-                .WithMany()
-                .HasForeignKey(g => g.ComponentProductId)
-                .OnDelete(DeleteBehavior.Restrict);
-        });
-
         // ProductReview Configuration
         builder.Entity<ProductReview>(b =>
         {
@@ -328,58 +246,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.Property(r => r.CustomerName).HasMaxLength(100);
         });
 
-        // Supplier Configuration
-        builder.Entity<Supplier>(b =>
-        {
-            b.HasKey(s => s.Id);
-            b.HasIndex(s => s.Code).IsUnique();
-            b.Property(s => s.Name).IsRequired().HasMaxLength(150);
-            b.HasQueryFilter(s => !s.IsDeleted);
-        });
 
-        // PurchaseOrder Configuration
-        builder.Entity<PurchaseOrder>(b =>
-        {
-            b.HasKey(po => po.Id);
-            b.HasIndex(po => po.PoNumber).IsUnique();
-            b.Property(po => po.PoNumber).IsRequired().HasMaxLength(50);
-
-            b.HasOne(po => po.Supplier)
-                .WithMany(s => s.PurchaseOrders)
-                .HasForeignKey(po => po.SupplierId)
-                .OnDelete(DeleteBehavior.Restrict);
-
-            b.HasQueryFilter(po => !po.IsDeleted);
-        });
-
-        // PurchaseOrderItem Configuration
-        builder.Entity<PurchaseOrderItem>(b =>
-        {
-            b.HasKey(poi => poi.Id);
-            b.HasOne(poi => poi.PurchaseOrder)
-                .WithMany(po => po.Items)
-                .HasForeignKey(poi => poi.PurchaseOrderId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        // GoodsReceipt Configuration
-        builder.Entity<GoodsReceipt>(b =>
-        {
-            b.HasKey(g => g.Id);
-            b.HasIndex(g => g.ReceiptNumber).IsUnique();
-            b.HasIndex(g => g.PurchaseOrderId);
-            b.Property(g => g.ReceiptNumber).IsRequired().HasMaxLength(50);
-        });
-
-        // GoodsReceiptItem Configuration
-        builder.Entity<GoodsReceiptItem>(b =>
-        {
-            b.HasKey(gi => gi.Id);
-            b.HasOne(gi => gi.GoodsReceipt)
-                .WithMany(g => g.Items)
-                .HasForeignKey(gi => gi.GoodsReceiptId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
 
         // Invoice Configuration
         builder.Entity<Invoice>(b =>
@@ -410,42 +277,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasQueryFilter(p => !p.IsDeleted);
         });
 
-        // Refund Configuration
-        builder.Entity<Refund>(b =>
-        {
-            b.HasKey(r => r.Id);
-            b.HasIndex(r => r.RefundNumber).IsUnique();
-            b.HasIndex(r => r.OrderId);
-            b.HasIndex(r => r.PaymentId);
-        });
 
-        // SupplierBill Configuration
-        builder.Entity<SupplierBill>(b =>
-        {
-            b.HasKey(sb => sb.Id);
-            b.HasIndex(sb => sb.BillNumber).IsUnique();
-            b.HasIndex(sb => sb.SupplierId);
-            b.HasIndex(sb => sb.PurchaseOrderId);
-        });
-
-        // ReturnOrder Configuration
-        builder.Entity<ReturnOrder>(b =>
-        {
-            b.HasKey(ro => ro.Id);
-            b.HasIndex(ro => ro.ReturnNumber).IsUnique();
-            b.HasIndex(ro => ro.OrderId);
-            b.HasIndex(ro => ro.CustomerId);
-        });
-
-        // ReturnOrderItem Configuration
-        builder.Entity<ReturnOrderItem>(b =>
-        {
-            b.HasKey(ri => ri.Id);
-            b.HasOne(ri => ri.ReturnOrder)
-                .WithMany(ro => ro.Items)
-                .HasForeignKey(ri => ri.ReturnOrderId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
 
         // Expense Configuration
         builder.Entity<Expense>(b =>
@@ -537,31 +369,6 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(r => r.TimestampUtc);
             b.HasIndex(r => r.Endpoint);
             b.HasIndex(r => r.IpAddress);
-        });
-
-        // Quote Configuration
-        builder.Entity<Quote>(b =>
-        {
-            b.HasKey(q => q.Id);
-            b.HasIndex(q => q.QuoteNumber).IsUnique();
-            b.HasIndex(q => q.CustomerId);
-            b.HasIndex(q => q.Status);
-            b.Property(q => q.QuoteNumber).IsRequired().HasMaxLength(50);
-            b.Property(q => q.Subtotal).HasPrecision(18, 2);
-            b.Property(q => q.Discount).HasPrecision(18, 2);
-            b.Property(q => q.Tax).HasPrecision(18, 2);
-            b.Property(q => q.GrandTotal).HasPrecision(18, 2);
-            b.HasMany(q => q.Items).WithOne(i => i.Quote).HasForeignKey(i => i.QuoteId).OnDelete(DeleteBehavior.Cascade);
-            b.HasQueryFilter(q => !q.IsDeleted);
-        });
-
-        // QuoteItem Configuration
-        builder.Entity<QuoteItem>(b =>
-        {
-            b.HasKey(qi => qi.Id);
-            b.Property(qi => qi.UnitPrice).HasPrecision(18, 2);
-            b.Property(qi => qi.LineTotal).HasPrecision(18, 2);
-            b.Property(qi => qi.DiscountPercentage).HasPrecision(18, 2);
         });
 
         // OtpVerification Configuration
@@ -685,10 +492,6 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
                 if (entry.Entity is Product product)
                 {
                     product.RowVersion = Guid.NewGuid();
-                }
-                else if (entry.Entity is StockItem stockItem)
-                {
-                    stockItem.RowVersion = Guid.NewGuid();
                 }
                 else if (entry.Entity is Promotion promotion)
                 {

@@ -171,16 +171,6 @@ public enum PromotionStatus
     Disabled = 5
 }
 
-public enum QuoteStatus
-{
-    Draft = 1,
-    Sent = 2,
-    Accepted = 3,
-    Rejected = 4,
-    Expired = 5,
-    Converted = 6
-}
-
 public enum EnquirySource
 {
     Direct = 1,

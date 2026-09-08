@@ -220,7 +220,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPut("users/{id}/role")]
-    [Authorize(Policy = "RequireSuperAdmin")]
+    [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(string id, [FromBody] System.Text.Json.JsonElement payload, CancellationToken cancellationToken)
     {
@@ -233,7 +233,12 @@ public class AuthController : ControllerBase
         };
 
         var success = await _identityService.UpdateUserRoleAsync(id, role, cancellationToken);
-        return Ok(ApiResponse<bool>.Ok(success, "Role updated successfully", _currentUser.CorrelationId));
+        if (!success)
+        {
+            return BadRequest(ApiResponse<bool>.Fail($"Failed to update user role to '{role}'. Ensure the role is valid.", _currentUser.CorrelationId));
+        }
+
+        return Ok(ApiResponse<bool>.Ok(true, "Role updated successfully", _currentUser.CorrelationId));
     }
 
     [HttpPut("users/{id}/status")]

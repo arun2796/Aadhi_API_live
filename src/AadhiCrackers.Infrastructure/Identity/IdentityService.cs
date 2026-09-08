@@ -664,14 +664,18 @@ public class IdentityService : IIdentityService
 
     public async Task<bool> UpdateUserRoleAsync(string userId, string role, CancellationToken cancellationToken = default)
     {
-        var validRoles = new[] { AppRoles.SuperAdmin, AppRoles.Admin, AppRoles.InventoryManager, AppRoles.SalesExecutive, AppRoles.Accountant, AppRoles.Customer };
-        if (!validRoles.Contains(role))
+        if (!AppRoles.All.Contains(role))
         {
             return false;
         }
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return false;
+
+        if (!await _roleManager.RoleExistsAsync(role))
+        {
+            await _roleManager.CreateAsync(new ApplicationRole(role, $"Default {role} role"));
+        }
 
         var currentRoles = await _userManager.GetRolesAsync(user);
         await _userManager.RemoveFromRolesAsync(user, currentRoles);

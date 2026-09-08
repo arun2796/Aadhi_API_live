@@ -8,7 +8,6 @@ using AadhiCrackers.Domain.ValueObjects;
 using AadhiCrackers.Infrastructure.Persistence;
 using AadhiCrackers.Infrastructure.Services;
 using FluentAssertions;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -17,37 +16,24 @@ namespace AadhiCrackers.Infrastructure.Tests;
 public class OrderStockLifecycleAndConcurrencyTests
 {
     [Fact]
-    public async Task OrderCreation_ReservesStockInStockItem_AndLogsStockReservedMovement()
+    public async Task OrderCreation_ReservesStockDirectlyOnProduct()
     {
         var dbPath = CreateTempDbPath();
         try
         {
             Guid orderId;
             Guid productId;
-            Guid warehouseId;
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
                 await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
+                var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
-                warehouseId = warehouse.Id;
-
-                var stockItem = new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 10,
-                    QuantityReserved = 0
-                };
-                context.StockItems.Add(stockItem);
-                await context.SaveChangesAsync();
 
                 var orderService = CreateOrderService(context);
 
                 var request = new CreateOrderRequest
                 {
-                    WarehouseId = warehouse.Id,
                     ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
                     PaymentMethod = PaymentMethod.UPI,
                     Items = new List<CreateOrderItemRequest>
@@ -65,20 +51,10 @@ public class OrderStockLifecycleAndConcurrencyTests
             // Verify in fresh DbContext
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                var updatedStock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                updatedStock.QuantityOnHand.Should().Be(10);
-                updatedStock.QuantityReserved.Should().Be(3);
-                updatedStock.QuantityAvailable.Should().Be(7);
-
                 var updatedProduct = await context.Products.FirstAsync(p => p.Id == productId);
                 updatedProduct.StockQuantity.Should().Be(10);
                 updatedProduct.ReservedQuantity.Should().Be(3);
-
-                var movement = await context.StockMovements.FirstOrDefaultAsync(m => m.MovementType == StockMovementType.StockReserved);
-                movement.Should().NotBeNull();
-                movement!.QuantityBefore.Should().Be(10);
-                movement.QuantityAfter.Should().Be(10);
-                movement.QuantityChange.Should().Be(3);
+                updatedProduct.AvailableQuantity.Should().Be(7);
             }
         }
         finally
@@ -88,36 +64,23 @@ public class OrderStockLifecycleAndConcurrencyTests
     }
 
     [Fact]
-    public async Task OrderCancellation_ReleasesReservedStock_AndLogsStockReservationReleased()
+    public async Task OrderCancellation_ReleasesReservedStockDirectlyOnProduct()
     {
         var dbPath = CreateTempDbPath();
         try
         {
             Guid orderId;
             Guid productId;
-            Guid warehouseId;
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
                 await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
+                var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
-                warehouseId = warehouse.Id;
-
-                var stockItem = new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 10,
-                    QuantityReserved = 0
-                };
-                context.StockItems.Add(stockItem);
-                await context.SaveChangesAsync();
 
                 var orderService = CreateOrderService(context);
                 var order = await orderService.CreateOrderAsync(new CreateOrderRequest
                 {
-                    WarehouseId = warehouse.Id,
                     ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
                     Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 4 } }
                 });
@@ -138,16 +101,10 @@ public class OrderStockLifecycleAndConcurrencyTests
             // Verify Stock released
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                var updatedStock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                updatedStock.QuantityOnHand.Should().Be(10);
-                updatedStock.QuantityReserved.Should().Be(0);
-                updatedStock.QuantityAvailable.Should().Be(10);
-
-                var releaseMovement = await context.StockMovements.FirstOrDefaultAsync(m => m.MovementType == StockMovementType.StockReservationReleased);
-                releaseMovement.Should().NotBeNull();
-                releaseMovement!.QuantityBefore.Should().Be(10);
-                releaseMovement.QuantityAfter.Should().Be(10);
-                releaseMovement.QuantityChange.Should().Be(4);
+                var updatedProduct = await context.Products.FirstAsync(p => p.Id == productId);
+                updatedProduct.StockQuantity.Should().Be(10);
+                updatedProduct.ReservedQuantity.Should().Be(0);
+                updatedProduct.AvailableQuantity.Should().Be(10);
             }
         }
         finally
@@ -157,36 +114,23 @@ public class OrderStockLifecycleAndConcurrencyTests
     }
 
     [Fact]
-    public async Task OrderShipment_DeductsOnHandAndReserved_AndLogsExactlyOneSaleMovement()
+    public async Task OrderShipment_DeductsDirectStockOnProduct()
     {
         var dbPath = CreateTempDbPath();
         try
         {
             Guid orderId;
             Guid productId;
-            Guid warehouseId;
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
                 await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
+                var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
-                warehouseId = warehouse.Id;
-
-                var stockItem = new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 10,
-                    QuantityReserved = 0
-                };
-                context.StockItems.Add(stockItem);
-                await context.SaveChangesAsync();
 
                 var orderService = CreateOrderService(context);
                 var order = await orderService.CreateOrderAsync(new CreateOrderRequest
                 {
-                    WarehouseId = warehouse.Id,
                     ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
                     Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 3 } }
                 });
@@ -198,31 +142,16 @@ public class OrderStockLifecycleAndConcurrencyTests
             {
                 await using var context = new AadhiDbContext(CreateSqliteOptions(dbPath));
                 var orderService = CreateOrderService(context);
-                try
-                {
-                    await orderService.UpdateOrderStatusAsync(orderId, new UpdateOrderStatusRequest { NewStatus = status });
-                }
-                catch (DbUpdateConcurrencyException ex)
-                {
-                    var details = string.Join("; ", ex.Entries.Select(e => $"{e.Entity.GetType().Name} state={e.State}"));
-                    throw new Exception($"Concurrency failure on status {status}: {details}", ex);
-                }
+                await orderService.UpdateOrderStatusAsync(orderId, new UpdateOrderStatusRequest { NewStatus = status });
             }
 
             // Verify Stock deduction
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                var updatedStock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                updatedStock.QuantityOnHand.Should().Be(7);
-                updatedStock.QuantityReserved.Should().Be(0);
-                updatedStock.QuantityAvailable.Should().Be(7);
-
-                // Verify exactly one Sale movement
-                var saleMovements = await context.StockMovements.Where(m => m.MovementType == StockMovementType.Sale).ToListAsync();
-                saleMovements.Should().HaveCount(1);
-                saleMovements[0].QuantityBefore.Should().Be(10);
-                saleMovements[0].QuantityChange.Should().Be(-3);
-                saleMovements[0].QuantityAfter.Should().Be(7);
+                var updatedProduct = await context.Products.FirstAsync(p => p.Id == productId);
+                updatedProduct.StockQuantity.Should().Be(7);
+                updatedProduct.ReservedQuantity.Should().Be(0);
+                updatedProduct.AvailableQuantity.Should().Be(7);
             }
 
             // Move Shipped -> OutForDelivery -> Delivered
@@ -236,9 +165,10 @@ public class OrderStockLifecycleAndConcurrencyTests
             // Ensure no double-deduction on delivery
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                var finalStock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                finalStock.QuantityOnHand.Should().Be(7);
-                (await context.StockMovements.CountAsync(m => m.MovementType == StockMovementType.Sale)).Should().Be(1);
+                var finalProduct = await context.Products.FirstAsync(p => p.Id == productId);
+                finalProduct.StockQuantity.Should().Be(7);
+                finalProduct.ReservedQuantity.Should().Be(0);
+                finalProduct.AvailableQuantity.Should().Be(7);
             }
         }
         finally
@@ -248,93 +178,23 @@ public class OrderStockLifecycleAndConcurrencyTests
     }
 
     [Fact]
-    public async Task ReturnedStatus_DoesNotAutoRestockWithoutInspection()
+    public async Task PaymentRejection_ReleasesReservationDirectlyOnProduct()
     {
         var dbPath = CreateTempDbPath();
         try
         {
             Guid orderId;
             Guid productId;
-            Guid warehouseId;
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
                 await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
+                var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
-                warehouseId = warehouse.Id;
-
-                var stockItem = new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 10,
-                    QuantityReserved = 0
-                };
-                context.StockItems.Add(stockItem);
-                await context.SaveChangesAsync();
 
                 var orderService = CreateOrderService(context);
                 var order = await orderService.CreateOrderAsync(new CreateOrderRequest
                 {
-                    WarehouseId = warehouse.Id,
-                    ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
-                    Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 2 } }
-                });
-                orderId = order.Id;
-            }
-
-            foreach (var status in new[] { OrderStatus.Confirmed, OrderStatus.Processing, OrderStatus.Packed, OrderStatus.Shipped, OrderStatus.OutForDelivery, OrderStatus.Delivered, OrderStatus.Returned })
-            {
-                await using var context = new AadhiDbContext(CreateSqliteOptions(dbPath));
-                var orderService = CreateOrderService(context);
-                await orderService.UpdateOrderStatusAsync(orderId, new UpdateOrderStatusRequest { NewStatus = status, Reason = "Status change" });
-            }
-
-            // Stock must NOT auto-restock upon return status alone
-            await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
-            {
-                var stock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                stock.QuantityOnHand.Should().Be(8);
-            }
-        }
-        finally
-        {
-            DeleteDb(dbPath);
-        }
-    }
-
-    [Fact]
-    public async Task PaymentRejection_ReleasesReservation_AndLogsMovementAndAudit()
-    {
-        var dbPath = CreateTempDbPath();
-        try
-        {
-            Guid orderId;
-            Guid productId;
-            Guid warehouseId;
-
-            await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
-            {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
-                productId = product.Id;
-                warehouseId = warehouse.Id;
-
-                var stockItem = new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 10,
-                    QuantityReserved = 0
-                };
-                context.StockItems.Add(stockItem);
-                await context.SaveChangesAsync();
-
-                var orderService = CreateOrderService(context);
-                var order = await orderService.CreateOrderAsync(new CreateOrderRequest
-                {
-                    WarehouseId = warehouse.Id,
                     ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
                     Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 3 } }
                 });
@@ -350,16 +210,13 @@ public class OrderStockLifecycleAndConcurrencyTests
                 updated.PaymentStatus.Should().Be(PaymentStatus.Failed);
             }
 
-            // Verify stock reservation released
+            // Verify stock reservation released on product
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                var stock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                stock.QuantityOnHand.Should().Be(10);
-                stock.QuantityReserved.Should().Be(0);
-
-                var movement = await context.StockMovements.FirstOrDefaultAsync(m => m.MovementType == StockMovementType.StockReservationReleased);
-                movement.Should().NotBeNull();
-                movement!.QuantityChange.Should().Be(3);
+                var product = await context.Products.FirstAsync(p => p.Id == productId);
+                product.StockQuantity.Should().Be(10);
+                product.ReservedQuantity.Should().Be(0);
+                product.AvailableQuantity.Should().Be(10);
 
                 var audit = await context.AuditLogs.FirstOrDefaultAsync(a => a.Action == AuditAction.PaymentRejected);
                 audit.Should().NotBeNull();
@@ -381,21 +238,11 @@ public class OrderStockLifecycleAndConcurrencyTests
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
                 await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
-
-                context.StockItems.Add(new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 10,
-                    QuantityReserved = 0
-                });
-                await context.SaveChangesAsync();
+                var (category, product, customer) = await SeedBaseDataAsync(context);
 
                 var orderService = CreateOrderService(context);
                 var order = await orderService.CreateOrderAsync(new CreateOrderRequest
                 {
-                    WarehouseId = warehouse.Id,
                     ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
                     Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }
                 });
@@ -416,103 +263,6 @@ public class OrderStockLifecycleAndConcurrencyTests
         }
     }
 
-    [Fact]
-    public async Task LedgerReplay_MatchesCurrentStockBalances_AndBeforeChangeAfterInvariantHolds()
-    {
-        var dbPath = CreateTempDbPath();
-        try
-        {
-            Guid productId;
-            Guid warehouseId;
-            Guid order1Id;
-            Guid order2Id;
-
-            await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
-            {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
-                var (category, product, warehouse, customer) = await SeedBaseDataAsync(context);
-                productId = product.Id;
-                warehouseId = warehouse.Id;
-
-                var stockItem = new StockItem
-                {
-                    ProductId = product.Id,
-                    WarehouseId = warehouse.Id,
-                    QuantityOnHand = 20,
-                    QuantityReserved = 0
-                };
-                context.StockItems.Add(stockItem);
-                await context.SaveChangesAsync();
-
-                var orderService = CreateOrderService(context);
-                var o1 = await orderService.CreateOrderAsync(new CreateOrderRequest
-                {
-                    WarehouseId = warehouse.Id,
-                    ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
-                    Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 5 } }
-                });
-                order1Id = o1.Id;
-
-                var o2 = await orderService.CreateOrderAsync(new CreateOrderRequest
-                {
-                    WarehouseId = warehouse.Id,
-                    ShippingAddress = new Address("Arun Kumar", "9876543210", "123 Main St", null, "Sivakasi", "TN", "626123"),
-                    Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 4 } }
-                });
-                order2Id = o2.Id;
-            }
-
-            // Ship order 1
-            foreach (var status in new[] { OrderStatus.Confirmed, OrderStatus.Processing, OrderStatus.Packed, OrderStatus.Shipped })
-            {
-                await using var context = new AadhiDbContext(CreateSqliteOptions(dbPath));
-                var orderService = CreateOrderService(context);
-                await orderService.UpdateOrderStatusAsync(order1Id, new UpdateOrderStatusRequest { NewStatus = status });
-            }
-
-            // Cancel order 2
-            await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
-            {
-                var orderService = CreateOrderService(context);
-                await orderService.UpdateOrderStatusAsync(order2Id, new UpdateOrderStatusRequest { NewStatus = OrderStatus.Cancelled, Reason = "Cancelled" });
-            }
-
-            // Verify Ledger Movements Invariants
-            await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
-            {
-                var movements = await context.StockMovements
-                    .Where(m => m.ProductId == productId && m.WarehouseId == warehouseId)
-                    .OrderBy(m => m.CreatedAtUtc)
-                    .ToListAsync();
-
-                movements.Should().NotBeEmpty();
-
-                // Check Before + Change == After for on-hand modifying movements
-                foreach (var m in movements)
-                {
-                    if (m.MovementType is StockMovementType.Sale or StockMovementType.Purchase or StockMovementType.Adjustment or StockMovementType.TransferIn or StockMovementType.TransferOut)
-                    {
-                        (m.QuantityBefore + m.QuantityChange).Should().Be(m.QuantityAfter);
-                    }
-                    else if (m.MovementType is StockMovementType.StockReserved or StockMovementType.StockReservationReleased)
-                    {
-                        m.QuantityBefore.Should().Be(m.QuantityAfter); // On-hand does not change
-                    }
-                }
-
-                // Check final StockItem matches exactly 15 on hand, 0 reserved
-                var stock = await context.StockItems.FirstAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
-                stock.QuantityOnHand.Should().Be(15);
-                stock.QuantityReserved.Should().Be(0);
-                stock.QuantityAvailable.Should().Be(15);
-            }
-        }
-        finally
-        {
-            DeleteDb(dbPath);
-        }
-    }
-
     private static OrderService CreateOrderService(AadhiDbContext context)
     {
         var user = new TestCurrentUserService();
@@ -522,7 +272,7 @@ public class OrderStockLifecycleAndConcurrencyTests
         return new OrderService(context, user, audit, outbox, numberGen);
     }
 
-    private static async Task<(Category, Product, Warehouse, Customer)> SeedBaseDataAsync(AadhiDbContext context)
+    private static async Task<(Category, Product, Customer)> SeedBaseDataAsync(AadhiDbContext context)
     {
         var category = new Category { Name = "Crackers", Slug = "crackers", IsActive = true };
         context.Categories.Add(category);
@@ -541,15 +291,6 @@ public class OrderStockLifecycleAndConcurrencyTests
         };
         context.Products.Add(product);
 
-        var warehouse = new Warehouse
-        {
-            Code = "WH-MAIN",
-            Name = "Main Sivakasi Warehouse",
-            IsPrimary = true,
-            IsActive = true
-        };
-        context.Warehouses.Add(warehouse);
-
         var customer = new Customer
         {
             FirstName = "Arun",
@@ -561,7 +302,7 @@ public class OrderStockLifecycleAndConcurrencyTests
         context.Customers.Add(customer);
 
         await context.SaveChangesAsync();
-        return (category, product, warehouse, customer);
+        return (category, product, customer);
     }
 
     private static string CreateTempDbPath() => Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.db");
@@ -573,25 +314,28 @@ public class OrderStockLifecycleAndConcurrencyTests
 
     private static void DeleteDb(string path)
     {
-        SqliteConnection.ClearAllPools();
-        foreach (var file in new[] { path, $"{path}-wal", $"{path}-shm" })
+        try
         {
-            if (File.Exists(file))
+            if (File.Exists(path))
             {
-                try { File.Delete(file); } catch { }
+                File.Delete(path);
             }
+        }
+        catch
+        {
+            // Best effort cleanup
         }
     }
 
     private sealed class TestCurrentUserService : ICurrentUserService
     {
-        public string? UserId => "test-user";
-        public string? UserName => "Test User";
-        public string? Email => "test@example.com";
-        public string? Role => "Admin";
-        public string? IpAddress => null;
-        public string? UserAgent => null;
-        public string CorrelationId => "order-test";
+        public string? UserId => "test-user-id";
+        public string? Email => "admin@aadhicrackers.com";
+        public string? UserName => "admin";
+        public string? Role => "SuperAdmin";
+        public string? IpAddress => "127.0.0.1";
+        public string? UserAgent => "TestRunner";
+        public string CorrelationId => Guid.NewGuid().ToString();
         public bool IsAuthenticated => true;
     }
 }

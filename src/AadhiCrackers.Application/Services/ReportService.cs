@@ -304,12 +304,12 @@ public class ReportService : IReportService
                 break;
 
             case "inventory":
-                sb.AppendLine("SKU,Product,Warehouse,QuantityOnHand,QuantityReserved,QuantityAvailable,ReorderLevel,Status");
-                var stocks = await _context.StockItems.Include(s => s.Product).Include(s => s.Warehouse).AsNoTracking().ToListAsync(cancellationToken);
-                foreach (var s in stocks)
+                sb.AppendLine("SKU,Product,StockQuantity,ReservedQuantity,AvailableQuantity,ReorderLevel,Status");
+                var inventoryProducts = await _context.Products.AsNoTracking().Where(p => !p.IsDeleted).ToListAsync(cancellationToken);
+                foreach (var p in inventoryProducts)
                 {
-                    var status = s.QuantityAvailable <= s.ReorderLevel ? "Low Stock" : "In Stock";
-                    sb.AppendLine($"\"{s.Product.SKU}\",\"{s.Product.Name.Replace("\"", "\"\"")}\",\"{s.Warehouse.Name}\",{s.QuantityOnHand},{s.QuantityReserved},{s.QuantityAvailable},{s.ReorderLevel},\"{status}\"");
+                    var status = p.AvailableQuantity <= p.ReorderLevel ? "Low Stock" : "In Stock";
+                    sb.AppendLine($"\"{p.SKU}\",\"{p.Name.Replace("\"", "\"\"")}\",{p.StockQuantity},{p.ReservedQuantity},{p.AvailableQuantity},{p.ReorderLevel},\"{status}\"");
                 }
                 break;
 

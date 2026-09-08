@@ -25,16 +25,6 @@ public interface IOrderService
     Task<OrderTrackingDto?> TrackOrderAsync(string orderNumberOrPhone, CancellationToken cancellationToken = default);
     Task<OrderDto> SubmitPaymentProofAsync(Guid orderId, SubmitPaymentProofRequest request, CancellationToken cancellationToken = default);
     Task<List<DeliveryOptionDto>> GetDeliveryOptionsAsync(decimal subtotal, CancellationToken cancellationToken = default);
-
-    // Return Order Workflow (Phase 7)
-    Task<ReturnOrderDto> CreateReturnOrderAsync(CreateReturnOrderRequest request, CancellationToken cancellationToken = default);
-    Task<ReturnOrderDto> ApproveReturnOrderAsync(Guid returnId, string? notes = null, CancellationToken cancellationToken = default);
-    Task<ReturnOrderDto> ReceiveReturnOrderAsync(Guid returnId, string? notes = null, CancellationToken cancellationToken = default);
-    Task<ReturnOrderDto> InspectReturnOrderAsync(Guid returnId, InspectReturnOrderRequest request, CancellationToken cancellationToken = default);
-    Task<ReturnOrderDto> RejectReturnOrderAsync(Guid returnId, RejectReturnOrderRequest request, CancellationToken cancellationToken = default);
-    Task<PagedResult<ReturnOrderDto>> GetReturnOrdersAsync(int page = 1, int pageSize = 20, string? status = null, CancellationToken cancellationToken = default);
-    Task<ReturnOrderDto?> GetReturnOrderByIdAsync(Guid returnId, CancellationToken cancellationToken = default);
-    Task<List<CustomerReturnDto>> GetMyReturnsAsync(CancellationToken cancellationToken = default);
 }
 
 public class OrderService : IOrderService
@@ -131,21 +121,9 @@ public class OrderService : IOrderService
             _context.Customers.Add(customer);
         }
 
-        // Get active warehouse (or primary warehouse)
-        var warehouse = request.WarehouseId.HasValue
-            ? await _context.Warehouses.FirstOrDefaultAsync(w => w.Id == request.WarehouseId.Value && w.IsActive, cancellationToken)
-            : await _context.Warehouses.FirstOrDefaultAsync(w => w.IsPrimary && w.IsActive, cancellationToken)
-              ?? await _context.Warehouses.FirstOrDefaultAsync(w => w.IsActive, cancellationToken);
-
-        if (warehouse == null)
-        {
-            throw new DomainException("No active warehouse configured for order fulfillment.");
-        }
-
         var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
         var products = await _context.Products
             .Include(p => p.Images)
-            .Include(p => p.BundleComponents)
             .Where(p => productIds.Contains(p.Id) && !p.IsDeleted)
             .ToDictionaryAsync(p => p.Id, cancellationToken);
 
@@ -167,7 +145,6 @@ public class OrderService : IOrderService
             Id = Guid.NewGuid(),
             OrderNumber = orderNumber,
             CustomerId = customer.Id,
-            WarehouseId = warehouse.Id,
             DeliveryMethod = deliveryMethod,
             PaymentMethod = request.PaymentMethod,
             PaymentStatus = PaymentStatus.Pending,
@@ -191,59 +168,13 @@ public class OrderService : IOrderService
             if (!products.TryGetValue(reqItem.ProductId, out var product))
                 throw new ResourceNotFoundException(nameof(Product), reqItem.ProductId);
 
-            var stockItem = await _context.StockItems
-                .FirstOrDefaultAsync(s => s.ProductId == product.Id && s.WarehouseId == warehouse.Id, cancellationToken);
-
-            if (stockItem == null || stockItem.QuantityAvailable < reqItem.Quantity)
+            if (product.AvailableQuantity < reqItem.Quantity)
             {
-                throw new InsufficientStockException(product.SKU, stockItem?.QuantityAvailable ?? 0, reqItem.Quantity);
+                throw new InsufficientStockException(product.SKU, product.AvailableQuantity, reqItem.Quantity);
             }
 
-            // Reserve stock in StockItem (single source of truth)
-            stockItem.QuantityReserved += reqItem.Quantity;
-
-            // Sync projection on Product
-            product.StockQuantity = stockItem.QuantityOnHand;
-            product.ReservedQuantity = stockItem.QuantityReserved;
-
-            // If product is a Bundle with components, reserve components stock too
-            if (product.ProductType == ProductType.Bundle && product.BundleComponents.Count > 0)
-            {
-                foreach (var comp in product.BundleComponents)
-                {
-                    var compReqQty = reqItem.Quantity * comp.Quantity;
-                    var compStockItem = await _context.StockItems
-                        .FirstOrDefaultAsync(s => s.ProductId == comp.ComponentProductId && s.WarehouseId == warehouse.Id, cancellationToken);
-
-                    if (compStockItem == null || compStockItem.QuantityAvailable < compReqQty)
-                    {
-                        var compProduct = await _context.Products.FindAsync(new object[] { comp.ComponentProductId }, cancellationToken);
-                        throw new InsufficientStockException(compProduct?.SKU ?? "BUNDLE_COMPONENT", compStockItem?.QuantityAvailable ?? 0, compReqQty);
-                    }
-
-                    compStockItem.QuantityReserved += compReqQty;
-                    var compProd = await _context.Products.FindAsync(new object[] { comp.ComponentProductId }, cancellationToken);
-                    if (compProd != null)
-                    {
-                        compProd.ReservedQuantity = compStockItem.QuantityReserved;
-                    }
-
-                    _context.StockMovements.Add(new StockMovement
-                    {
-                        ProductId = comp.ComponentProductId,
-                        WarehouseId = warehouse.Id,
-                        MovementType = StockMovementType.StockReserved,
-                        QuantityChange = compReqQty,
-                        QuantityBefore = compStockItem.QuantityOnHand,
-                        QuantityAfter = compStockItem.QuantityOnHand,
-                        ReferenceType = "BundleReservation",
-                        ReferenceId = order.OrderNumber,
-                        Reason = $"Component stock reserved for bundle {product.SKU} in Order #{order.OrderNumber}",
-                        CreatedBy = _currentUser.UserName ?? "Customer",
-                        CreatedAtUtc = DateTime.UtcNow
-                    });
-                }
-            }
+            // Reserve stock directly on Product (single source of truth)
+            product.ReservedQuantity += reqItem.Quantity;
 
             var unitPrice = product.Price;
             var lineTotalBeforeTax = unitPrice * reqItem.Quantity;
@@ -270,22 +201,6 @@ public class OrderService : IOrderService
             order.Items.Add(orderItem);
             itemsSubtotal += lineTotalBeforeTax;
             totalTax += itemTax;
-
-            // Generate stock movement reservation
-            _context.StockMovements.Add(new StockMovement
-            {
-                ProductId = product.Id,
-                WarehouseId = warehouse.Id,
-                MovementType = StockMovementType.StockReserved,
-                QuantityChange = reqItem.Quantity,
-                QuantityBefore = stockItem.QuantityOnHand,
-                QuantityAfter = stockItem.QuantityOnHand,
-                ReferenceType = "OrderReservation",
-                ReferenceId = order.OrderNumber,
-                Reason = $"Stock reserved for Order #{order.OrderNumber}",
-                CreatedBy = _currentUser.UserName ?? "Customer",
-                CreatedAtUtc = DateTime.UtcNow
-            });
         }
 
         order.ItemsSubtotal = itemsSubtotal;
@@ -406,90 +321,20 @@ public class OrderService : IOrderService
         var oldStatus = order.OrderStatus;
         order.ChangeStatus(request.NewStatus, request.Reason, _currentUser.UserName ?? "Admin");
 
-        var warehouseId = order.WarehouseId;
-        if (!warehouseId.HasValue)
-        {
-            var primaryWh = await _context.Warehouses.FirstOrDefaultAsync(w => w.IsPrimary && w.IsActive, cancellationToken)
-                ?? await _context.Warehouses.FirstOrDefaultAsync(w => w.IsActive, cancellationToken);
-            warehouseId = primaryWh?.Id;
-        }
-
         // Handle Cancellation -> Release reserved stock
         if (request.NewStatus == OrderStatus.Cancelled)
         {
             var productIds = order.Items.Select(i => i.ProductId).ToList();
             var products = await _context.Products
-                .Include(p => p.BundleComponents)
                 .Where(p => productIds.Contains(p.Id))
                 .ToListAsync(cancellationToken);
 
             foreach (var item in order.Items)
             {
                 var prod = products.FirstOrDefault(p => p.Id == item.ProductId);
-
-                if (warehouseId.HasValue)
+                if (prod != null)
                 {
-                    var stockItem = await _context.StockItems
-                        .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.WarehouseId == warehouseId.Value, cancellationToken);
-                    if (stockItem != null)
-                    {
-                        stockItem.QuantityReserved = Math.Max(0, stockItem.QuantityReserved - item.Quantity);
-                        if (prod != null)
-                        {
-                            prod.StockQuantity = stockItem.QuantityOnHand;
-                            prod.ReservedQuantity = stockItem.QuantityReserved;
-                        }
-
-                        _context.StockMovements.Add(new StockMovement
-                        {
-                            ProductId = item.ProductId,
-                            WarehouseId = warehouseId.Value,
-                            MovementType = StockMovementType.StockReservationReleased,
-                            QuantityChange = item.Quantity,
-                            QuantityBefore = stockItem.QuantityOnHand,
-                            QuantityAfter = stockItem.QuantityOnHand,
-                            ReferenceType = "OrderCancellation",
-                            ReferenceId = order.OrderNumber,
-                            Reason = $"Released reserved stock due to Order #{order.OrderNumber} cancellation",
-                            CreatedBy = _currentUser.UserName ?? "Admin",
-                            CreatedAtUtc = DateTime.UtcNow
-                        });
-                    }
-
-                    // Release components if bundle
-                    if (prod != null && prod.ProductType == ProductType.Bundle && prod.BundleComponents.Count > 0)
-                    {
-                        foreach (var comp in prod.BundleComponents)
-                        {
-                            var compReleaseQty = item.Quantity * comp.Quantity;
-                            var compStockItem = await _context.StockItems
-                                .FirstOrDefaultAsync(s => s.ProductId == comp.ComponentProductId && s.WarehouseId == warehouseId.Value, cancellationToken);
-                            if (compStockItem != null)
-                            {
-                                compStockItem.QuantityReserved = Math.Max(0, compStockItem.QuantityReserved - compReleaseQty);
-                                var compProd = await _context.Products.FindAsync(new object[] { comp.ComponentProductId }, cancellationToken);
-                                if (compProd != null)
-                                {
-                                    compProd.ReservedQuantity = compStockItem.QuantityReserved;
-                                }
-
-                                _context.StockMovements.Add(new StockMovement
-                                {
-                                    ProductId = comp.ComponentProductId,
-                                    WarehouseId = warehouseId.Value,
-                                    MovementType = StockMovementType.StockReservationReleased,
-                                    QuantityChange = compReleaseQty,
-                                    QuantityBefore = compStockItem.QuantityOnHand,
-                                    QuantityAfter = compStockItem.QuantityOnHand,
-                                    ReferenceType = "BundleCancellation",
-                                    ReferenceId = order.OrderNumber,
-                                    Reason = $"Released bundle component stock for Order #{order.OrderNumber} cancellation",
-                                    CreatedBy = _currentUser.UserName ?? "Admin",
-                                    CreatedAtUtc = DateTime.UtcNow
-                                });
-                            }
-                        }
-                    }
+                    prod.ReservedQuantity = Math.Max(0, prod.ReservedQuantity - item.Quantity);
                 }
             }
 
@@ -522,87 +367,19 @@ public class OrderService : IOrderService
             // Fulfill reserved stock into permanent deduction
             var productIds = order.Items.Select(i => i.ProductId).ToList();
             var products = await _context.Products
-                .Include(p => p.BundleComponents)
                 .Where(p => productIds.Contains(p.Id))
                 .ToListAsync(cancellationToken);
 
             foreach (var item in order.Items)
             {
                 var prod = products.FirstOrDefault(p => p.Id == item.ProductId);
-
-                if (warehouseId.HasValue)
+                if (prod != null)
                 {
-                    var stockItem = await _context.StockItems
-                        .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.WarehouseId == warehouseId.Value, cancellationToken);
-                    if (stockItem != null)
-                    {
-                        var beforeOnHand = stockItem.QuantityOnHand;
-                        stockItem.QuantityOnHand = Math.Max(0, stockItem.QuantityOnHand - item.Quantity);
-                        stockItem.QuantityReserved = Math.Max(0, stockItem.QuantityReserved - item.Quantity);
-
-                        if (prod != null)
-                        {
-                            prod.StockQuantity = stockItem.QuantityOnHand;
-                            prod.ReservedQuantity = stockItem.QuantityReserved;
-                        }
-
-                        _context.StockMovements.Add(new StockMovement
-                        {
-                            ProductId = item.ProductId,
-                            WarehouseId = warehouseId.Value,
-                            MovementType = StockMovementType.Sale,
-                            QuantityChange = -item.Quantity,
-                            QuantityBefore = beforeOnHand,
-                            QuantityAfter = stockItem.QuantityOnHand,
-                            ReferenceType = "OrderShipped",
-                            ReferenceId = order.OrderNumber,
-                            Reason = $"Deducted on-hand stock for fulfilled Order #{order.OrderNumber}",
-                            CreatedBy = _currentUser.UserName ?? "Admin",
-                            CreatedAtUtc = DateTime.UtcNow
-                        });
-                    }
-
-                    // Deduct components if bundle
-                    if (prod != null && prod.ProductType == ProductType.Bundle && prod.BundleComponents.Count > 0)
-                    {
-                        foreach (var comp in prod.BundleComponents)
-                        {
-                            var compDeductQty = item.Quantity * comp.Quantity;
-                            var compStockItem = await _context.StockItems
-                                .FirstOrDefaultAsync(s => s.ProductId == comp.ComponentProductId && s.WarehouseId == warehouseId.Value, cancellationToken);
-                            if (compStockItem != null)
-                            {
-                                var compBeforeOnHand = compStockItem.QuantityOnHand;
-                                compStockItem.QuantityOnHand = Math.Max(0, compStockItem.QuantityOnHand - compDeductQty);
-                                compStockItem.QuantityReserved = Math.Max(0, compStockItem.QuantityReserved - compDeductQty);
-                                var compProd = await _context.Products.FindAsync(new object[] { comp.ComponentProductId }, cancellationToken);
-                                if (compProd != null)
-                                {
-                                    compProd.StockQuantity = compStockItem.QuantityOnHand;
-                                    compProd.ReservedQuantity = compStockItem.QuantityReserved;
-                                }
-
-                                _context.StockMovements.Add(new StockMovement
-                                {
-                                    ProductId = comp.ComponentProductId,
-                                    WarehouseId = warehouseId.Value,
-                                    MovementType = StockMovementType.Sale,
-                                    QuantityChange = -compDeductQty,
-                                    QuantityBefore = compBeforeOnHand,
-                                    QuantityAfter = compStockItem.QuantityOnHand,
-                                    ReferenceType = "BundleShipped",
-                                    ReferenceId = order.OrderNumber,
-                                    Reason = $"Deducted bundle component stock for fulfilled Order #{order.OrderNumber}",
-                                    CreatedBy = _currentUser.UserName ?? "Admin",
-                                    CreatedAtUtc = DateTime.UtcNow
-                                });
-                            }
-                        }
-                    }
+                    prod.StockQuantity = Math.Max(0, prod.StockQuantity - item.Quantity);
+                    prod.ReservedQuantity = Math.Max(0, prod.ReservedQuantity - item.Quantity);
                 }
             }
         }
-        // Note: Returned status does NOT auto-restock; restock only happens via Sellable Return Inspection in Phase 7.
 
         if (request.NewStatus == OrderStatus.Delivered && order.PaymentMethod == PaymentMethod.COD)
         {
@@ -1036,88 +813,18 @@ public class OrderService : IOrderService
         order.PaymentVerificationNotes = $"REJECTED: {request.Reason}";
         order.ChangeStatus(OrderStatus.Cancelled, $"Payment Proof Rejected: {request.Reason}", operatorName);
 
-        // Release reserved stock at warehouse and product level
-        var warehouseId = order.WarehouseId;
-        if (!warehouseId.HasValue)
-        {
-            var primaryWh = await _context.Warehouses.FirstOrDefaultAsync(w => w.IsPrimary && w.IsActive, cancellationToken)
-                ?? await _context.Warehouses.FirstOrDefaultAsync(w => w.IsActive, cancellationToken);
-            warehouseId = primaryWh?.Id;
-        }
-
+        // Release reserved stock at product level
         var productIds = order.Items.Select(i => i.ProductId).ToList();
         var products = await _context.Products
-            .Include(p => p.BundleComponents)
             .Where(p => productIds.Contains(p.Id))
             .ToListAsync(cancellationToken);
 
         foreach (var item in order.Items)
         {
             var prod = products.FirstOrDefault(p => p.Id == item.ProductId);
-
-            if (warehouseId.HasValue)
+            if (prod != null)
             {
-                var stockItem = await _context.StockItems
-                    .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.WarehouseId == warehouseId.Value, cancellationToken);
-                if (stockItem != null)
-                {
-                    stockItem.QuantityReserved = Math.Max(0, stockItem.QuantityReserved - item.Quantity);
-                    if (prod != null)
-                    {
-                        prod.StockQuantity = stockItem.QuantityOnHand;
-                        prod.ReservedQuantity = stockItem.QuantityReserved;
-                    }
-
-                    _context.StockMovements.Add(new StockMovement
-                    {
-                        ProductId = item.ProductId,
-                        WarehouseId = warehouseId.Value,
-                        MovementType = StockMovementType.StockReservationReleased,
-                        QuantityChange = item.Quantity,
-                        QuantityBefore = stockItem.QuantityOnHand,
-                        QuantityAfter = stockItem.QuantityOnHand,
-                        ReferenceType = "PaymentRejected",
-                        ReferenceId = order.OrderNumber,
-                        Reason = $"Released reserved stock due to payment rejection for Order #{order.OrderNumber}",
-                        CreatedBy = operatorName,
-                        CreatedAtUtc = DateTime.UtcNow
-                    });
-                }
-
-                // Release components if bundle
-                if (prod != null && prod.ProductType == ProductType.Bundle && prod.BundleComponents.Count > 0)
-                {
-                    foreach (var comp in prod.BundleComponents)
-                    {
-                        var compReleaseQty = item.Quantity * comp.Quantity;
-                        var compStockItem = await _context.StockItems
-                            .FirstOrDefaultAsync(s => s.ProductId == comp.ComponentProductId && s.WarehouseId == warehouseId.Value, cancellationToken);
-                        if (compStockItem != null)
-                        {
-                            compStockItem.QuantityReserved = Math.Max(0, compStockItem.QuantityReserved - compReleaseQty);
-                            var compProd = await _context.Products.FindAsync(new object[] { comp.ComponentProductId }, cancellationToken);
-                            if (compProd != null)
-                            {
-                                compProd.ReservedQuantity = compStockItem.QuantityReserved;
-                            }
-
-                            _context.StockMovements.Add(new StockMovement
-                            {
-                                ProductId = comp.ComponentProductId,
-                                WarehouseId = warehouseId.Value,
-                                MovementType = StockMovementType.StockReservationReleased,
-                                QuantityChange = compReleaseQty,
-                                QuantityBefore = compStockItem.QuantityOnHand,
-                                QuantityAfter = compStockItem.QuantityOnHand,
-                                ReferenceType = "BundlePaymentRejected",
-                                ReferenceId = order.OrderNumber,
-                                Reason = $"Released bundle component stock for Order #{order.OrderNumber} payment rejection",
-                                CreatedBy = operatorName,
-                                CreatedAtUtc = DateTime.UtcNow
-                            });
-                        }
-                    }
-                }
+                prod.ReservedQuantity = Math.Max(0, prod.ReservedQuantity - item.Quantity);
             }
         }
 
@@ -1309,513 +1016,5 @@ public class OrderService : IOrderService
                 ChangedAtUtc = h.ChangedAtUtc
             }).ToList()
         };
-    }
-
-    public async Task<ReturnOrderDto> CreateReturnOrderAsync(CreateReturnOrderRequest request, CancellationToken cancellationToken = default)
-    {
-        if (request.Items.Count == 0)
-            throw new DomainException("Return request must contain at least one item.");
-
-        var order = await _context.Orders
-            .Include(o => o.Items)
-            .Include(o => o.Customer)
-            .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken)
-            ?? throw new ResourceNotFoundException(nameof(Order), request.OrderId);
-
-        if (order.OrderStatus is not (OrderStatus.Delivered or OrderStatus.Shipped or OrderStatus.Returned))
-            throw new DomainException($"Cannot request a return for an order with status '{order.OrderStatus}'. Returns are only permitted for shipped or delivered orders.");
-
-        // IDOR guard: customers may only request returns for their own orders
-        if (string.Equals(_currentUser.Role, "Customer", StringComparison.OrdinalIgnoreCase))
-        {
-            var currentCustomer = await ResolveCurrentCustomerAsync(cancellationToken);
-            if (currentCustomer == null || order.CustomerId != currentCustomer.Id)
-                throw new DomainException("You can only request returns for your own orders.");
-        }
-
-        var reason = string.IsNullOrWhiteSpace(request.Comments)
-            ? request.Reason
-            : $"{request.Reason} — {request.Comments!.Trim()}";
-
-        var returnNumber = await _numberGenerator.GenerateReturnNumberAsync(cancellationToken);
-        var returnOrder = new ReturnOrder
-        {
-            ReturnNumber = returnNumber,
-            OrderId = order.Id,
-            CustomerId = order.CustomerId,
-            Reason = reason,
-            Status = "Requested",
-            RequestedAtUtc = DateTime.UtcNow
-        };
-
-        decimal expectedRefund = 0;
-        foreach (var reqItem in request.Items)
-        {
-            // Items may be addressed either by OrderItemId (preferred by the storefront) or by ProductId (back-compat).
-            var orderItem = reqItem.OrderItemId.HasValue
-                ? order.Items.FirstOrDefault(i => i.Id == reqItem.OrderItemId.Value)
-                : order.Items.FirstOrDefault(i => i.ProductId == reqItem.ProductId);
-            if (orderItem == null)
-                throw new DomainException($"Item {(reqItem.OrderItemId.HasValue ? reqItem.OrderItemId.Value : reqItem.ProductId)} was not found in Order #{order.OrderNumber}.");
-
-            if (reqItem.Quantity <= 0 || reqItem.Quantity > orderItem.Quantity)
-                throw new DomainException($"Invalid return quantity {reqItem.Quantity} for product '{orderItem.ProductNameSnapshot}'. Maximum allowed is {orderItem.Quantity}.");
-
-            var returnItem = new ReturnOrderItem
-            {
-                ReturnOrderId = returnOrder.Id,
-                ProductId = orderItem.ProductId,
-                Quantity = reqItem.Quantity,
-                UnitPrice = orderItem.UnitPrice,
-                ConditionNotes = reqItem.Reason
-            };
-            returnOrder.Items.Add(returnItem);
-            expectedRefund += orderItem.UnitPrice.ToDecimal() * reqItem.Quantity;
-        }
-
-        returnOrder.RefundAmount = Money.FromDecimal(expectedRefund);
-
-        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
-        _context.ReturnOrders.Add(returnOrder);
-
-        await _auditLog.LogAsync(
-            AuditAction.ReturnRequested,
-            "Returns",
-            nameof(ReturnOrder),
-            returnOrder.Id.ToString(),
-            returnOrder.ReturnNumber,
-            after: new { returnOrder.ReturnNumber, returnOrder.OrderId, returnOrder.Reason, RefundAmount = returnOrder.RefundAmount.ToDecimal() },
-            cancellationToken: cancellationToken);
-
-        await _outbox.EnqueueAsync("ReturnRequested", new
-        {
-            ReturnId = returnOrder.Id,
-            returnOrder.ReturnNumber,
-            order.OrderNumber,
-            CustomerEmail = order.Customer?.Email
-        }, cancellationToken);
-
-        await _context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        return (await GetReturnOrderByIdAsync(returnOrder.Id, cancellationToken))!;
-    }
-
-    public async Task<ReturnOrderDto> ApproveReturnOrderAsync(Guid returnId, string? notes = null, CancellationToken cancellationToken = default)
-    {
-        var returnOrder = await _context.ReturnOrders
-            .Include(r => r.Order)
-            .Include(r => r.Customer)
-            .FirstOrDefaultAsync(r => r.Id == returnId, cancellationToken)
-            ?? throw new ResourceNotFoundException(nameof(ReturnOrder), returnId);
-
-        if (returnOrder.Status != "Requested")
-            throw new DomainException($"Cannot approve return with status '{returnOrder.Status}'. Only 'Requested' returns can be approved.");
-
-        returnOrder.Status = "Approved";
-        returnOrder.InspectionNotes = notes;
-
-        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
-
-        await _auditLog.LogAsync(
-            AuditAction.ReturnApproved,
-            "Returns",
-            nameof(ReturnOrder),
-            returnOrder.Id.ToString(),
-            returnOrder.ReturnNumber,
-            after: new { returnOrder.ReturnNumber, returnOrder.Status, Notes = notes },
-            cancellationToken: cancellationToken);
-
-        await _outbox.EnqueueAsync("ReturnApproved", new
-        {
-            ReturnId = returnOrder.Id,
-            returnOrder.ReturnNumber,
-            CustomerEmail = returnOrder.Customer?.Email
-        }, cancellationToken);
-
-        await _context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        return (await GetReturnOrderByIdAsync(returnOrder.Id, cancellationToken))!;
-    }
-
-    public async Task<ReturnOrderDto> ReceiveReturnOrderAsync(Guid returnId, string? notes = null, CancellationToken cancellationToken = default)
-    {
-        var returnOrder = await _context.ReturnOrders
-            .Include(r => r.Order)
-            .Include(r => r.Customer)
-            .FirstOrDefaultAsync(r => r.Id == returnId, cancellationToken)
-            ?? throw new ResourceNotFoundException(nameof(ReturnOrder), returnId);
-
-        if (returnOrder.Status != "Approved")
-            throw new DomainException($"Cannot mark return as received with status '{returnOrder.Status}'. Return must first be 'Approved'.");
-
-        returnOrder.Status = "Received";
-        if (!string.IsNullOrWhiteSpace(notes))
-        {
-            returnOrder.InspectionNotes = string.IsNullOrWhiteSpace(returnOrder.InspectionNotes) ? notes : $"{returnOrder.InspectionNotes}; {notes}";
-        }
-
-        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
-
-        await _auditLog.LogAsync(
-            AuditAction.ReturnReceived,
-            "Returns",
-            nameof(ReturnOrder),
-            returnOrder.Id.ToString(),
-            returnOrder.ReturnNumber,
-            after: new { returnOrder.ReturnNumber, returnOrder.Status },
-            cancellationToken: cancellationToken);
-
-        await _context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        return (await GetReturnOrderByIdAsync(returnOrder.Id, cancellationToken))!;
-    }
-
-    public async Task<ReturnOrderDto> InspectReturnOrderAsync(Guid returnId, InspectReturnOrderRequest request, CancellationToken cancellationToken = default)
-    {
-        var returnOrder = await _context.ReturnOrders
-            .Include(r => r.Items)
-            .Include(r => r.Order)
-            .Include(r => r.Customer)
-            .FirstOrDefaultAsync(r => r.Id == returnId, cancellationToken)
-            ?? throw new ResourceNotFoundException(nameof(ReturnOrder), returnId);
-
-        if (returnOrder.Status is not ("Received" or "Approved"))
-            throw new DomainException($"Cannot inspect return in status '{returnOrder.Status}'. Return must be 'Received' or 'Approved'.");
-
-        returnOrder.InspectionNotes = request.InspectionNotes;
-        returnOrder.InspectedAtUtc = DateTime.UtcNow;
-        returnOrder.Status = "Inspected";
-
-        var warehouseId = returnOrder.Order.WarehouseId
-            ?? (await _context.Warehouses.FirstOrDefaultAsync(w => w.IsPrimary && w.IsActive, cancellationToken))?.Id
-            ?? (await _context.Warehouses.FirstOrDefaultAsync(w => w.IsActive, cancellationToken))?.Id
-            ?? throw new DomainException("No active warehouse found for restocking return items.");
-
-        bool anySellable = false;
-        decimal totalSellableRefund = 0;
-
-        foreach (var itemInspection in request.ItemInspections)
-        {
-            var returnItem = returnOrder.Items.FirstOrDefault(i => i.ProductId == itemInspection.ProductId);
-            if (returnItem != null)
-            {
-                returnItem.IsDamaged = !itemInspection.IsSellable;
-                returnItem.ConditionNotes = itemInspection.ConditionNotes;
-
-                if (itemInspection.IsSellable && itemInspection.Quantity > 0)
-                {
-                    anySellable = true;
-                    totalSellableRefund += returnItem.UnitPrice.ToDecimal() * itemInspection.Quantity;
-
-                    // Restock ONLY sellable items into StockItem authoritative ledger
-                    var stockItem = await _context.StockItems
-                        .FirstOrDefaultAsync(s => s.ProductId == itemInspection.ProductId && s.WarehouseId == warehouseId, cancellationToken);
-                    var product = await _context.Products.FirstOrDefaultAsync(p => p.Id == itemInspection.ProductId, cancellationToken);
-
-                    if (stockItem != null)
-                    {
-                        var beforeOnHand = stockItem.QuantityOnHand;
-                        stockItem.QuantityOnHand += itemInspection.Quantity;
-                        if (product != null)
-                        {
-                            product.StockQuantity = stockItem.QuantityOnHand;
-                        }
-
-                        _context.StockMovements.Add(new StockMovement
-                        {
-                            ProductId = itemInspection.ProductId,
-                            WarehouseId = warehouseId,
-                            MovementType = StockMovementType.Return,
-                            QuantityChange = itemInspection.Quantity,
-                            QuantityBefore = beforeOnHand,
-                            QuantityAfter = stockItem.QuantityOnHand,
-                            ReferenceType = "ReturnInspection",
-                            ReferenceId = returnOrder.ReturnNumber,
-                            Reason = $"Restocked sellable returned items from Return #{returnOrder.ReturnNumber}",
-                            CreatedBy = _currentUser.UserName ?? "Inspector",
-                            CreatedAtUtc = DateTime.UtcNow
-                        });
-                    }
-                }
-                else if (!itemInspection.IsSellable && itemInspection.Quantity > 0)
-                {
-                    // Damaged item log
-                    var currentStock = (await _context.StockItems.FirstOrDefaultAsync(s => s.ProductId == itemInspection.ProductId && s.WarehouseId == warehouseId, cancellationToken))?.QuantityOnHand ?? 0;
-                    _context.StockMovements.Add(new StockMovement
-                    {
-                        ProductId = itemInspection.ProductId,
-                        WarehouseId = warehouseId,
-                        MovementType = StockMovementType.Damage,
-                        QuantityChange = 0,
-                        QuantityBefore = currentStock,
-                        QuantityAfter = currentStock,
-                        ReferenceType = "ReturnInspectionDamaged",
-                        ReferenceId = returnOrder.ReturnNumber,
-                        Reason = $"Damaged returned items flagged from Return #{returnOrder.ReturnNumber}: {itemInspection.ConditionNotes}",
-                        CreatedBy = _currentUser.UserName ?? "Inspector",
-                        CreatedAtUtc = DateTime.UtcNow
-                    });
-                }
-            }
-        }
-
-        returnOrder.IsSellable = anySellable;
-        returnOrder.RefundAmount = Money.FromDecimal(totalSellableRefund);
-
-        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
-
-        await _auditLog.LogAsync(
-            AuditAction.ReturnInspected,
-            "Returns",
-            nameof(ReturnOrder),
-            returnOrder.Id.ToString(),
-            returnOrder.ReturnNumber,
-            after: new { returnOrder.ReturnNumber, returnOrder.Status, returnOrder.IsSellable, RefundAmount = returnOrder.RefundAmount.ToDecimal() },
-            cancellationToken: cancellationToken);
-
-        await _outbox.EnqueueAsync("ReturnInspected", new
-        {
-            ReturnId = returnOrder.Id,
-            returnOrder.ReturnNumber,
-            returnOrder.IsSellable,
-            RefundAmount = returnOrder.RefundAmount.ToDecimal(),
-            CustomerEmail = returnOrder.Customer?.Email
-        }, cancellationToken);
-
-        await _context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        return (await GetReturnOrderByIdAsync(returnOrder.Id, cancellationToken))!;
-    }
-
-    public async Task<PagedResult<ReturnOrderDto>> GetReturnOrdersAsync(int page = 1, int pageSize = 20, string? status = null, CancellationToken cancellationToken = default)
-    {
-        var query = _context.ReturnOrders
-            .AsNoTracking()
-            .Include(r => r.Order)
-            .Include(r => r.Customer)
-            .Include(r => r.Items)
-                .ThenInclude(i => i.Product)
-            .Where(r => !r.IsDeleted);
-
-        if (!string.IsNullOrWhiteSpace(status))
-            query = query.Where(r => r.Status.ToLower() == status.Trim().ToLower());
-
-        var totalCount = await query.CountAsync(cancellationToken);
-
-        var items = await query
-            .OrderByDescending(r => r.RequestedAtUtc)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(r => new ReturnOrderDto
-            {
-                Id = r.Id,
-                ReturnNumber = r.ReturnNumber,
-                OrderId = r.OrderId,
-                OrderNumber = r.Order.OrderNumber,
-                CustomerId = r.CustomerId,
-                CustomerName = $"{r.Customer.FirstName} {r.Customer.LastName}".Trim(),
-                Reason = r.Reason,
-                Status = r.Status,
-                InspectionNotes = r.InspectionNotes,
-                IsSellable = r.IsSellable,
-                RefundAmount = r.RefundAmount.ToDecimal(),
-                RequestedAtUtc = r.RequestedAtUtc,
-                InspectedAtUtc = r.InspectedAtUtc,
-                Items = r.Items.Select(i => new ReturnOrderItemDto
-                {
-                    Id = i.Id,
-                    ProductId = i.ProductId,
-                    ProductName = i.Product.Name,
-                    SKU = i.Product.SKU,
-                    Quantity = i.Quantity,
-                    UnitPrice = i.UnitPrice.ToDecimal(),
-                    IsDamaged = i.IsDamaged,
-                    ConditionNotes = i.ConditionNotes
-                }).ToList()
-            })
-            .ToListAsync(cancellationToken);
-
-        return new PagedResult<ReturnOrderDto>(items, totalCount, page, pageSize);
-    }
-
-    public async Task<ReturnOrderDto?> GetReturnOrderByIdAsync(Guid returnId, CancellationToken cancellationToken = default)
-    {
-        var r = await _context.ReturnOrders
-            .AsNoTracking()
-            .Include(r => r.Order)
-            .Include(r => r.Customer)
-            .Include(r => r.Items)
-                .ThenInclude(i => i.Product)
-            .FirstOrDefaultAsync(r => r.Id == returnId && !r.IsDeleted, cancellationToken);
-
-        if (r == null) return null;
-
-        return new ReturnOrderDto
-        {
-            Id = r.Id,
-            ReturnNumber = r.ReturnNumber,
-            OrderId = r.OrderId,
-            OrderNumber = r.Order.OrderNumber,
-            CustomerId = r.CustomerId,
-            CustomerName = $"{r.Customer.FirstName} {r.Customer.LastName}".Trim(),
-            Reason = r.Reason,
-            Status = r.Status,
-            InspectionNotes = r.InspectionNotes,
-            IsSellable = r.IsSellable,
-            RefundAmount = r.RefundAmount.ToDecimal(),
-            RequestedAtUtc = r.RequestedAtUtc,
-            InspectedAtUtc = r.InspectedAtUtc,
-            Items = r.Items.Select(i => new ReturnOrderItemDto
-            {
-                Id = i.Id,
-                ProductId = i.ProductId,
-                ProductName = i.Product.Name,
-                SKU = i.Product.SKU,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice.ToDecimal(),
-                IsDamaged = i.IsDamaged,
-                ConditionNotes = i.ConditionNotes
-            }).ToList()
-        };
-    }
-
-    public async Task<ReturnOrderDto> RejectReturnOrderAsync(Guid returnId, RejectReturnOrderRequest request, CancellationToken cancellationToken = default)
-    {
-        var returnOrder = await _context.ReturnOrders
-            .Include(r => r.Order)
-            .Include(r => r.Customer)
-            .FirstOrDefaultAsync(r => r.Id == returnId && !r.IsDeleted, cancellationToken)
-            ?? throw new ResourceNotFoundException(nameof(ReturnOrder), returnId);
-
-        if (returnOrder.Status is not ("Requested" or "Approved" or "Received"))
-            throw new DomainException($"Cannot reject return with status '{returnOrder.Status}'. Only 'Requested', 'Approved' or 'Received' returns can be rejected.");
-
-        var oldStatus = returnOrder.Status;
-        returnOrder.Status = "Rejected";
-        if (!string.IsNullOrWhiteSpace(request.Reason))
-        {
-            returnOrder.InspectionNotes = string.IsNullOrWhiteSpace(returnOrder.InspectionNotes)
-                ? $"Rejected: {request.Reason}"
-                : $"{returnOrder.InspectionNotes}; Rejected: {request.Reason}";
-        }
-        returnOrder.UpdatedAtUtc = DateTime.UtcNow;
-
-        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
-
-        await _auditLog.LogAsync(
-            AuditAction.ReturnRejected,
-            "Returns",
-            nameof(ReturnOrder),
-            returnOrder.Id.ToString(),
-            returnOrder.ReturnNumber,
-            before: new { Status = oldStatus },
-            after: new { returnOrder.ReturnNumber, returnOrder.Status, Reason = request.Reason },
-            cancellationToken: cancellationToken);
-
-        await _outbox.EnqueueAsync("ReturnRejected", new
-        {
-            ReturnId = returnOrder.Id,
-            returnOrder.ReturnNumber,
-            Reason = request.Reason,
-            CustomerEmail = returnOrder.Customer?.Email
-        }, cancellationToken);
-
-        await _context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        return (await GetReturnOrderByIdAsync(returnOrder.Id, cancellationToken))!;
-    }
-
-    public async Task<List<CustomerReturnDto>> GetMyReturnsAsync(CancellationToken cancellationToken = default)
-    {
-        var customer = await ResolveCurrentCustomerAsync(cancellationToken);
-        if (customer == null)
-        {
-            return new List<CustomerReturnDto>();
-        }
-
-        var returns = await _context.ReturnOrders
-            .AsNoTracking()
-            .Include(r => r.Order)
-            .Include(r => r.Items)
-                .ThenInclude(i => i.Product)
-            .Where(r => r.CustomerId == customer.Id && !r.IsDeleted)
-            .OrderByDescending(r => r.RequestedAtUtc)
-            .ToListAsync(cancellationToken);
-
-        if (returns.Count == 0)
-        {
-            return new List<CustomerReturnDto>();
-        }
-
-        var orderIds = returns.Select(r => r.OrderId).Distinct().ToList();
-        var refundsByOrder = (await _context.Refunds
-                .AsNoTracking()
-                .Where(f => orderIds.Contains(f.OrderId) && !f.IsDeleted)
-                .ToListAsync(cancellationToken))
-            .GroupBy(f => f.OrderId)
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.CreatedAtUtc).First());
-
-        return returns.Select(r =>
-        {
-            refundsByOrder.TryGetValue(r.OrderId, out var refund);
-            return new CustomerReturnDto
-            {
-                Id = r.Id,
-                ReturnNumber = r.ReturnNumber,
-                OrderId = r.OrderId,
-                OrderNumber = r.Order?.OrderNumber ?? string.Empty,
-                Status = r.Status,
-                Reason = r.Reason,
-                CreatedAt = r.RequestedAtUtc,
-                Items = r.Items.Select(i => new CustomerReturnItemDto
-                {
-                    ProductName = i.Product?.Name ?? "Product",
-                    Quantity = i.Quantity,
-                    UnitPrice = i.UnitPrice.ToDecimal()
-                }).ToList(),
-                Refund = refund == null ? null : new CustomerReturnRefundDto
-                {
-                    RefundNumber = refund.RefundNumber,
-                    Status = refund.Status,
-                    Amount = refund.Amount.ToDecimal(),
-                    Method = refund.Method.ToString(),
-                    ProcessedAt = refund.ProcessedAtUtc
-                },
-                Timeline = BuildReturnTimeline(r, refund)
-            };
-        }).ToList();
-    }
-
-    private static List<CustomerReturnTimelineEntryDto> BuildReturnTimeline(ReturnOrder r, Refund? refund)
-    {
-        var timeline = new List<CustomerReturnTimelineEntryDto>
-        {
-            new() { Status = "Requested", Date = r.RequestedAtUtc, Completed = true }
-        };
-
-        if (string.Equals(r.Status, "Rejected", StringComparison.OrdinalIgnoreCase))
-        {
-            timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Rejected", Date = r.UpdatedAtUtc, Completed = true });
-            return timeline;
-        }
-
-        static bool StatusIn(string status, params string[] values) =>
-            values.Contains(status, StringComparer.OrdinalIgnoreCase);
-
-        var approved = StatusIn(r.Status, "Approved", "Received", "Inspected", "Refunded", "Closed");
-        var pickedUp = StatusIn(r.Status, "Received", "Inspected", "Refunded", "Closed");
-        var refundInitiated = refund != null || StatusIn(r.Status, "Refunded", "Closed");
-        var refundCompleted = refund != null && string.Equals(refund.Status, "Completed", StringComparison.OrdinalIgnoreCase);
-
-        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Approved", Date = approved ? (r.UpdatedAtUtc ?? r.RequestedAtUtc) : null, Completed = approved });
-        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Product Picked Up", Date = pickedUp ? (r.InspectedAtUtc ?? r.UpdatedAtUtc) : null, Completed = pickedUp });
-        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Refund Initiated", Date = refund?.CreatedAtUtc, Completed = refundInitiated });
-        timeline.Add(new CustomerReturnTimelineEntryDto { Status = "Refund Completed", Date = refundCompleted ? refund!.ProcessedAtUtc : null, Completed = refundCompleted });
-        return timeline;
     }
 }

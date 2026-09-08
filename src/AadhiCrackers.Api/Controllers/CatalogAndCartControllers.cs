@@ -87,6 +87,14 @@ public class ProductsController : ControllerBase
         return Ok(ApiResponse<List<ProductDto>>.Ok(products, correlationId: _currentUser.CorrelationId));
     }
 
+    [HttpGet("low-stock")]
+    [Authorize(Policy = "RequireAdmin")]
+    public async Task<ActionResult<ApiResponse<List<ProductDto>>>> GetLowStock([FromQuery] int count = 10, CancellationToken cancellationToken = default)
+    {
+        var products = await _catalogService.GetLowStockProductsAsync(count, cancellationToken);
+        return Ok(ApiResponse<List<ProductDto>>.Ok(products, correlationId: _currentUser.CorrelationId));
+    }
+
     [HttpPost]
     [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
@@ -204,6 +212,15 @@ public class BrandsController : ControllerBase
     {
         var result = await _catalogService.CreateBrandAsync(request, cancellationToken);
         return Ok(ApiResponse<BrandDto>.Ok(result, "Brand created successfully", _currentUser.CorrelationId));
+    }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteBrand(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _catalogService.DeleteBrandAsync(id, cancellationToken);
+        return Ok(ApiResponse<bool>.Ok(result, "Brand deleted successfully", _currentUser.CorrelationId));
     }
 }
 

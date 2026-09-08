@@ -79,16 +79,6 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         };
         _context.Customers.Add(customer);
 
-        var warehouse = new Warehouse
-        {
-            Code = "WH-01",
-            Name = "Hub",
-            Phone = "9876543210",
-            IsActive = true,
-            IsPrimary = true
-        };
-        _context.Warehouses.Add(warehouse);
-
         var category = new Category { Name = "SkyShots", Slug = "skyshots", IsActive = true };
         _context.Categories.Add(category);
 
@@ -105,14 +95,6 @@ public class PromotionFinanceAndOutboxTests : IDisposable
             IsActive = true
         };
         _context.Products.Add(product);
-        _context.StockItems.Add(new StockItem
-        {
-            ProductId = product.Id,
-            WarehouseId = warehouse.Id,
-            QuantityOnHand = 50,
-            QuantityReserved = 0,
-            ReorderLevel = 5
-        });
 
         var promo = new Promotion
         {
@@ -131,7 +113,6 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         // 2. First order with SAVE10
         var order1 = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             CouponCode = "SAVE10",
             PaymentMethod = PaymentMethod.COD,
             Items = new List<CreateOrderItemRequest>
@@ -163,7 +144,6 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         // 3. Second order with SAVE10 by same customer -> PerCustomerLimit reached, discount is 0
         var order2 = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             CouponCode = "SAVE10",
             PaymentMethod = PaymentMethod.COD,
             Items = new List<CreateOrderItemRequest>
@@ -247,16 +227,6 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         };
         _context.Customers.Add(customer);
 
-        var warehouse = new Warehouse
-        {
-            Code = "WH-02",
-            Name = "Depot",
-            Phone = "9876543212",
-            IsActive = true,
-            IsPrimary = true
-        };
-        _context.Warehouses.Add(warehouse);
-
         var category = new Category { Name = "Rockets", Slug = "rockets", IsActive = true };
         _context.Categories.Add(category);
 
@@ -273,20 +243,11 @@ public class PromotionFinanceAndOutboxTests : IDisposable
             IsActive = true
         };
         _context.Products.Add(product);
-        _context.StockItems.Add(new StockItem
-        {
-            ProductId = product.Id,
-            WarehouseId = warehouse.Id,
-            QuantityOnHand = 100,
-            QuantityReserved = 0,
-            ReorderLevel = 10
-        });
         await _context.SaveChangesAsync();
 
         // 2. Order 2 units: Subtotal = 1000, COGS = 2 * 250 = 500
         var order = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            WarehouseId = warehouse.Id,
             PaymentMethod = PaymentMethod.COD,
             Items = new List<CreateOrderItemRequest>
             {
