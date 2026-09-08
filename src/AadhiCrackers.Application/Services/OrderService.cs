@@ -52,46 +52,38 @@ public class OrderService : IOrderService
         _fileStorage = fileStorage;
     }
 
-    private async Task<string?> ProcessScreenshotBase64Async(string? base64Data, CancellationToken cancellationToken)
+    private Task<string?> ProcessScreenshotBase64Async(string? base64Data, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(base64Data)) return null;
+        if (string.IsNullOrWhiteSpace(base64Data)) return Task.FromResult<string?>(null);
 
         var trimmed = base64Data.Trim();
-        if (!trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && 
-            (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.StartsWith("/storage/", StringComparison.OrdinalIgnoreCase)))
+        // If it's an external HTTP/HTTPS URL (e.g. S3, Cloudinary), preserve it
+        if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            return trimmed;
+            return Task.FromResult<string?>(trimmed);
         }
 
-        if (_fileStorage == null) return trimmed;
+        if (trimmed.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult<string?>(trimmed);
+        }
 
+        // If raw base64 string was passed without header, format as data URI
         try
         {
             var raw = trimmed;
-            var ext = ".jpg";
-
             if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
             {
                 var commaIndex = raw.IndexOf(',');
-                if (commaIndex >= 0)
-                {
-                    var header = raw[..commaIndex];
-                    if (header.Contains("image/png", StringComparison.OrdinalIgnoreCase)) ext = ".png";
-                    else if (header.Contains("image/webp", StringComparison.OrdinalIgnoreCase)) ext = ".webp";
-                    raw = raw[(commaIndex + 1)..];
-                }
+                if (commaIndex >= 0) raw = raw[(commaIndex + 1)..];
             }
-
-            var bytes = Convert.FromBase64String(raw.Trim());
-            using var stream = new MemoryStream(bytes);
-            var savedPath = await _fileStorage.SaveFileAsync(stream, $"proof_{Guid.NewGuid():N}{ext}", "payment-proofs", cancellationToken);
-            return savedPath;
+            Convert.FromBase64String(raw.Trim());
+            return Task.FromResult<string?>($"data:image/jpeg;base64,{raw.Trim()}");
         }
         catch
         {
-            return trimmed;
+            return Task.FromResult<string?>(trimmed);
         }
     }
 
