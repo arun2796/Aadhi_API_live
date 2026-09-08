@@ -87,8 +87,8 @@ public static class DatabaseSeeder
                 new() { Key = "Store.Address", Value = "123, West Street, Sivanandapuram, Coimbatore, Tamil Nadu - 641012", Group = "Store", Description = "Physical Store Address" },
                 new() { Key = "Tax.GstRate", Value = "18.00", Group = "Tax", Description = "Default GST Rate for Fireworks" },
                 new() { Key = "Shipping.FreeShippingThreshold", Value = "3000.00", Group = "Shipping", Description = "Free shipping order minimum (standard delivery only)" },
-                new() { Key = "Shipping.StandardCharge", Value = "150.00", Group = "Shipping", Description = "Standard delivery charge" },
-                new() { Key = "Delivery.StandardCharge", Value = "40.00", Group = "Shipping", Description = "Standard delivery charge (3-5 days)" },
+                new() { Key = "Shipping.StandardCharge", Value = "0.00", Group = "Shipping", Description = "Standard delivery charge" },
+                new() { Key = "Delivery.StandardCharge", Value = "0.00", Group = "Shipping", Description = "Standard transport delivery charge (To-Pay freight on collection)" },
                 new() { Key = "Delivery.ExpressCharge", Value = "90.00", Group = "Shipping", Description = "Express delivery charge (1-2 days); never free" },
                 new() { Key = "RateLimiting.Enabled", Value = "true", Group = "Security", Description = "Enable API Rate Limiting" }
             };
@@ -96,12 +96,17 @@ public static class DatabaseSeeder
             var addedSettings = false;
             foreach (var setting in settingDefaults)
             {
-                var exists = await context.SystemSettings
+                var existing = await context.SystemSettings
                     .IgnoreQueryFilters()
-                    .AnyAsync(s => s.Key == setting.Key);
-                if (!exists)
+                    .FirstOrDefaultAsync(s => s.Key == setting.Key);
+                if (existing == null)
                 {
                     context.SystemSettings.Add(setting);
+                    addedSettings = true;
+                }
+                else if (setting.Key == "Delivery.StandardCharge" && (existing.Value == "40.00" || existing.Value == "40"))
+                {
+                    existing.Value = "0.00";
                     addedSettings = true;
                 }
             }

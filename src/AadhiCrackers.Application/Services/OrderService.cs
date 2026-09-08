@@ -320,6 +320,10 @@ public class OrderService : IOrderService
 
         var oldStatus = order.OrderStatus;
         order.ChangeStatus(request.NewStatus, request.Reason, _currentUser.UserName ?? "Admin");
+        if (!string.IsNullOrWhiteSpace(request.TrackingNumber))
+        {
+            order.TrackingNumber = request.TrackingNumber.Trim();
+        }
 
         // Handle Cancellation -> Release reserved stock
         if (request.NewStatus == OrderStatus.Cancelled)
@@ -906,7 +910,7 @@ public class OrderService : IOrderService
                 : fallback;
 
         return new DeliverySettings(
-            Parse("Delivery.StandardCharge", 40m),
+            Parse("Delivery.StandardCharge", 0m),
             Parse("Delivery.ExpressCharge", 90m),
             Parse("Shipping.FreeShippingThreshold", 3000m));
     }

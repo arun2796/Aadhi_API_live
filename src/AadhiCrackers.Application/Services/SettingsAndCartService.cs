@@ -197,7 +197,7 @@ public class CartService : ICartService
                 ? value
                 : fallback;
 
-        var standardCharge = ParseSetting("Delivery.StandardCharge", 40m);
+        var standardCharge = ParseSetting("Delivery.StandardCharge", 0m);
         var freeThreshold = ParseSetting("Shipping.FreeShippingThreshold", 3000m);
         result.ShippingCharge = result.Subtotal >= freeThreshold ? 0m : standardCharge;
 

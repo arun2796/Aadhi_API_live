@@ -82,8 +82,8 @@ public class Order : AggregateRoot<Guid>
         return OrderStatus switch
         {
             OrderStatus.Pending => nextStatus is OrderStatus.Confirmed or OrderStatus.Cancelled,
-            OrderStatus.Confirmed => nextStatus is OrderStatus.Processing or OrderStatus.Cancelled,
-            OrderStatus.Processing => nextStatus is OrderStatus.Packed or OrderStatus.Cancelled,
+            OrderStatus.Confirmed => nextStatus is OrderStatus.Processing or OrderStatus.Packed or OrderStatus.Shipped or OrderStatus.Cancelled,
+            OrderStatus.Processing => nextStatus is OrderStatus.Packed or OrderStatus.Shipped or OrderStatus.Cancelled,
             OrderStatus.Packed => nextStatus is OrderStatus.Shipped or OrderStatus.Cancelled,
             OrderStatus.Shipped => nextStatus is OrderStatus.OutForDelivery or OrderStatus.Delivered,
             OrderStatus.OutForDelivery => nextStatus is OrderStatus.Delivered,

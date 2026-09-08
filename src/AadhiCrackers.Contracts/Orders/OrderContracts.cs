@@ -164,6 +164,7 @@ public class UpdateOrderStatusRequest
 {
     public OrderStatus NewStatus { get; set; }
     public string? Reason { get; set; }
+    public string? TrackingNumber { get; set; }
 }
 
 public class VerifyPaymentRequest
