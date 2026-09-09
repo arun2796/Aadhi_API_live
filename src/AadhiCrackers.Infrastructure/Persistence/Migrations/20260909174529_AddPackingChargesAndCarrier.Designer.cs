@@ -3,6 +3,7 @@ using System;
 using AadhiCrackers.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AadhiCrackers.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AadhiDbContext))]
-    partial class AadhiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909174529_AddPackingChargesAndCarrier")]
+    partial class AddPackingChargesAndCarrier
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.2");
@@ -1200,51 +1203,6 @@ namespace AadhiCrackers.Infrastructure.Persistence.Migrations
                     b.ToTable("ProductCategories");
                 });
 
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductComboItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("ComboProductId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("ComponentProductId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ComboProductId");
-
-                    b.HasIndex("ComponentProductId");
-
-                    b.HasIndex("ComboProductId", "ComponentProductId")
-                        .IsUnique();
-
-                    b.ToTable("ProductComboItems");
-                });
-
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductImage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2113,25 +2071,6 @@ namespace AadhiCrackers.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
                 });
 
-            modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductComboItem", b =>
-                {
-                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "ComboProduct")
-                        .WithMany("ComboItems")
-                        .HasForeignKey("ComboProductId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "ComponentProduct")
-                        .WithMany()
-                        .HasForeignKey("ComponentProductId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("ComboProduct");
-
-                    b.Navigation("ComponentProduct");
-                });
-
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductImage", b =>
                 {
                     b.HasOne("AadhiCrackers.Domain.Entities.Product", "Product")
@@ -2285,8 +2224,6 @@ namespace AadhiCrackers.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.Product", b =>
                 {
-                    b.Navigation("ComboItems");
-
                     b.Navigation("Images");
 
                     b.Navigation("ProductCategories");

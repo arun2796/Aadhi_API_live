@@ -98,14 +98,22 @@ public class OrderDto
     public decimal Discount { get; set; }
     public decimal Tax { get; set; }
     public decimal ShippingCharge { get; set; }
+
+    // Packing / handling charge billed on the order, and the rate it was billed at,
+    // so clients can render e.g. "Packing Charges (1.5%)".
+    public decimal PackingCharges { get; set; }
+    public decimal PackingChargePercent { get; set; }
     public decimal GrandTotal { get; set; }
     public string? CouponCode { get; set; }
     public string? Notes { get; set; }
-    public string? TrackingNumber { get; set; }
+
+    // Dispatch details
+    public string? CarrierName { get; set; }
+    public string? TrackingNumber { get; set; } // LR / waybill number issued by the carrier
     public DateTime PlacedAtUtc { get; set; }
 
     // Delivery
-    public string DeliveryMethod { get; set; } = "standard";
+    public string DeliveryMethod { get; set; } = "transport";
     public DateTime? ExpectedDeliveryFrom { get; set; }
     public DateTime? ExpectedDeliveryTo { get; set; }
 
@@ -136,7 +144,9 @@ public class CreateOrderRequest
     public Address ShippingAddress { get; set; } = new();
     public Address? BillingAddress { get; set; }
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.UPI;
-    public string? DeliveryMethod { get; set; } // "standard" (default) | "express"
+    // "transport" is the only delivery method. The legacy codes "standard", "express",
+    // "godown-pickup" and "parcel-service" are still accepted and normalize to "transport".
+    public string? DeliveryMethod { get; set; }
     public string? CouponCode { get; set; }
     public string? Notes { get; set; }
     
@@ -167,6 +177,17 @@ public class UpdateOrderStatusRequest
     public string? TrackingNumber { get; set; }
 }
 
+public class DispatchOrderRequest
+{
+    /// <summary>Transport company / parcel service the consignment was handed to.</summary>
+    public string CarrierName { get; set; } = string.Empty;
+
+    /// <summary>LR (lorry receipt) / waybill number issued by the carrier.</summary>
+    public string TrackingNumber { get; set; } = string.Empty;
+
+    public string? Notes { get; set; }
+}
+
 public class VerifyPaymentRequest
 {
     public string? VerifiedUtrNumber { get; set; }
@@ -189,10 +210,11 @@ public class OrderTrackingDto
     public string? PaymentScreenshotUrl { get; set; }
     public DateTime PlacedAtUtc { get; set; }
     public DateTime? EstimatedDeliveryUtc { get; set; }
-    public string DeliveryMethod { get; set; } = "standard";
+    public string DeliveryMethod { get; set; } = "transport";
     public DateTime? ExpectedDeliveryFrom { get; set; }
     public DateTime? ExpectedDeliveryTo { get; set; }
-    public string? TrackingNumber { get; set; }
+    public string? CarrierName { get; set; }
+    public string? TrackingNumber { get; set; } // LR / waybill number issued by the carrier
     public string DeliveryAddressSummary { get; set; } = string.Empty;
     public List<OrderStatusHistoryDto> Timeline { get; set; } = new();
     public List<OrderItemDto> Items { get; set; } = new();
@@ -201,9 +223,14 @@ public class OrderTrackingDto
 
 public class DeliveryOptionDto
 {
-    public string Code { get; set; } = string.Empty; // standard | express
+    /// <summary>Canonical code. Only "transport" is issued; the legacy codes
+    /// (standard/express/godown-pickup/parcel-service) are still accepted on input as aliases.</summary>
+    public string Code { get; set; } = string.Empty; // transport
     public string Name { get; set; } = string.Empty;
+    /// <summary>Always 0 — freight is never charged or collected by the store.</summary>
     public decimal Charge { get; set; }
     public int EtaMinDays { get; set; }
     public int EtaMaxDays { get; set; }
+    /// <summary>Customer-facing explanation of how freight is settled (paid to the transport company on collection).</summary>
+    public string Note { get; set; } = string.Empty;
 }

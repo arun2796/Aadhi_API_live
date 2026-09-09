@@ -27,6 +27,7 @@ public interface IApplicationDbContext
     DbSet<LoginHistory> LoginHistories { get; }
     DbSet<RateLimitLog> RateLimitLogs { get; }
     DbSet<ProductCategory> ProductCategories { get; }
+    DbSet<ProductComboItem> ProductComboItems { get; }
     DbSet<ProductReview> ProductReviews { get; }
     DbSet<PromotionRedemption> PromotionRedemptions { get; }
     DbSet<HomepageBanner> HomepageBanners { get; }

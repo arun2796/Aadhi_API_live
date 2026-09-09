@@ -623,6 +623,9 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CarrierName")
+                        .HasColumnType("text");
+
                     b.Property<string>("CouponCode")
                         .HasColumnType("text");
 
@@ -664,6 +667,13 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
 
                     b.Property<int>("OrderStatus")
                         .HasColumnType("integer");
+
+                    b.Property<decimal>("PackingChargePercent")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)");
+
+                    b.Property<long>("PackingCharges")
+                        .HasColumnType("bigint");
 
                     b.Property<int>("PaymentMethod")
                         .HasColumnType("integer");
@@ -1193,6 +1203,51 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.HasIndex("CategoryId");
 
                     b.ToTable("ProductCategories");
+                });
+
+            modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductComboItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ComboProductId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ComponentProductId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComboProductId");
+
+                    b.HasIndex("ComponentProductId");
+
+                    b.HasIndex("ComboProductId", "ComponentProductId")
+                        .IsUnique();
+
+                    b.ToTable("ProductComboItems");
                 });
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductImage", b =>
@@ -2067,6 +2122,25 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.Navigation("Product");
                 });
 
+            modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductComboItem", b =>
+                {
+                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "ComboProduct")
+                        .WithMany("ComboItems")
+                        .HasForeignKey("ComboProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AadhiCrackers.Domain.Entities.Product", "ComponentProduct")
+                        .WithMany()
+                        .HasForeignKey("ComponentProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ComboProduct");
+
+                    b.Navigation("ComponentProduct");
+                });
+
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.ProductImage", b =>
                 {
                     b.HasOne("AadhiCrackers.Domain.Entities.Product", "Product")
@@ -2220,6 +2294,8 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
 
             modelBuilder.Entity("AadhiCrackers.Domain.Entities.Product", b =>
                 {
+                    b.Navigation("ComboItems");
+
                     b.Navigation("Images");
 
                     b.Navigation("ProductCategories");

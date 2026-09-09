@@ -13,6 +13,7 @@ public interface IOrderService
 {
     Task<OrderDto> CreateOrderAsync(CreateOrderRequest request, CancellationToken cancellationToken = default);
     Task<OrderDto> UpdateOrderStatusAsync(Guid orderId, UpdateOrderStatusRequest request, CancellationToken cancellationToken = default);
+    Task<OrderDto> DispatchOrderAsync(Guid orderId, DispatchOrderRequest request, CancellationToken cancellationToken = default);
     Task<OrderDto> VerifyPaymentAsync(Guid orderId, VerifyPaymentRequest request, CancellationToken cancellationToken = default);
     Task<OrderDto> MoveToPackingAsync(Guid orderId, CancellationToken cancellationToken = default);
     Task<OrderDto> RejectPaymentAsync(Guid orderId, RejectPaymentRequest request, CancellationToken cancellationToken = default);
@@ -227,11 +228,21 @@ public class OrderService : IOrderService
         }
         order.Discount = discount;
 
-        // Shipping calculation: Sivakasi Cracker orders have NO online delivery charges (Transport freight is collected To-Pay at lorry office)
+        // Delivery is NEVER charged: goods travel by lorry and the customer pays the transport
+        // company directly when collecting the parcel. There is no free-shipping threshold and
+        // no delivery-charge setting is consulted — ShippingCharge is always zero on new orders
+        // (the column survives only so historical orders keep their recorded value).
         var shippingCharge = Money.Zero();
         order.ShippingCharge = shippingCharge;
 
-        order.GrandTotal = itemsSubtotal - discount + totalTax;
+        // Packing charges: a real billed line, percentage of the items subtotal
+        // (rate from the SystemSettings key Order.PackingChargePercent, default 1.5%).
+        var packingChargePercent = await GetPackingChargePercentAsync(cancellationToken);
+        var packingCharges = CalculatePackingCharges(itemsSubtotal, packingChargePercent);
+        order.PackingCharges = packingCharges;
+        order.PackingChargePercent = packingChargePercent;
+
+        order.GrandTotal = itemsSubtotal - discount + totalTax + shippingCharge + packingCharges;
 
         // Initial Order History
         order.StatusHistories.Add(new OrderStatusHistory
@@ -433,6 +444,93 @@ public class OrderService : IOrderService
             ?? throw new InvalidOperationException("Failed to retrieve updated order");
     }
 
+    public async Task<OrderDto> DispatchOrderAsync(Guid orderId, DispatchOrderRequest request, CancellationToken cancellationToken = default)
+    {
+        var carrierName = request.CarrierName?.Trim();
+        var trackingNumber = request.TrackingNumber?.Trim();
+
+        if (string.IsNullOrWhiteSpace(carrierName))
+            throw new DomainException("Carrier name is required to dispatch an order.");
+
+        if (string.IsNullOrWhiteSpace(trackingNumber))
+            throw new DomainException("LR / waybill number is required to dispatch an order.");
+
+        var order = await _context.Orders
+            .Include(o => o.Items)
+            .Include(o => o.StatusHistories)
+            .Include(o => o.Invoices)
+            .Include(o => o.Customer)
+            .FirstOrDefaultAsync(o => o.Id == orderId, cancellationToken)
+            ?? throw new ResourceNotFoundException(nameof(Order), orderId);
+
+        if (order.OrderStatus is not (OrderStatus.Confirmed or OrderStatus.Processing or OrderStatus.Packed))
+        {
+            throw new InvalidOrderStateTransitionException(order.OrderStatus.ToString(), OrderStatus.Shipped.ToString());
+        }
+
+        var operatorName = _currentUser.UserName ?? _currentUser.Email ?? "Dispatch Desk";
+        var oldStatus = order.OrderStatus;
+
+        order.CarrierName = carrierName;
+        order.TrackingNumber = trackingNumber;
+
+        var reason = $"Dispatched via {carrierName} — LR {trackingNumber}";
+        if (!string.IsNullOrWhiteSpace(request.Notes))
+        {
+            reason += $" | {request.Notes.Trim()}";
+        }
+
+        // ChangeStatus appends the status-history entry and syncs FulfillmentStatus to Shipped.
+        order.ChangeStatus(OrderStatus.Shipped, reason, operatorName);
+        order.FulfillmentStatus = FulfillmentStatus.Shipped;
+
+        // Dispatch fulfils the reservation: convert reserved stock into a permanent deduction,
+        // the same way UpdateOrderStatusAsync does when an order moves to Shipped.
+        var productIds = order.Items.Select(i => i.ProductId).ToList();
+        var products = await _context.Products
+            .Where(p => productIds.Contains(p.Id))
+            .ToListAsync(cancellationToken);
+
+        foreach (var item in order.Items)
+        {
+            var prod = products.FirstOrDefault(p => p.Id == item.ProductId);
+            if (prod != null)
+            {
+                prod.StockQuantity = Math.Max(0, prod.StockQuantity - item.Quantity);
+                prod.ReservedQuantity = Math.Max(0, prod.ReservedQuantity - item.Quantity);
+            }
+        }
+
+        await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
+
+        await _auditLog.LogAsync(
+            AuditAction.OrderStatusChanged,
+            "Orders",
+            nameof(Order),
+            order.Id.ToString(),
+            order.OrderNumber,
+            before: new { Status = oldStatus.ToString() },
+            after: new { Status = order.OrderStatus.ToString(), order.CarrierName, order.TrackingNumber },
+            cancellationToken: cancellationToken);
+
+        await _outbox.EnqueueAsync("OrderDispatched", new
+        {
+            OrderId = order.Id,
+            order.OrderNumber,
+            order.CarrierName,
+            order.TrackingNumber,
+            OldStatus = oldStatus.ToString(),
+            NewStatus = order.OrderStatus.ToString(),
+            CustomerEmail = order.Customer?.Email
+        }, cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return await GetOrderByIdAsync(order.Id, cancellationToken)
+            ?? throw new InvalidOperationException("Failed to retrieve dispatched order");
+    }
+
     public async Task<PagedResult<OrderDto>> GetOrdersAsync(int page = 1, int pageSize = 20, OrderStatus? status = null, string? search = null, CancellationToken cancellationToken = default)
     {
         var query = _context.Orders
@@ -567,9 +665,10 @@ public class OrderService : IOrderService
             PaymentScreenshotUrl = order.PaymentScreenshotUrl,
             PlacedAtUtc = order.PlacedAtUtc,
             EstimatedDeliveryUtc = order.PlacedAtUtc.AddDays(etaMax),
-            DeliveryMethod = order.DeliveryMethod,
+            DeliveryMethod = NormalizeDeliveryMethod(order.DeliveryMethod),
             ExpectedDeliveryFrom = order.PlacedAtUtc.AddDays(etaMin),
             ExpectedDeliveryTo = order.PlacedAtUtc.AddDays(etaMax),
+            CarrierName = order.CarrierName,
             TrackingNumber = order.TrackingNumber,
             DeliveryAddressSummary = order.ShippingAddress.ToSingleLine(),
             Timeline = order.StatusHistories.OrderBy(h => h.ChangedAtUtc).Select(h => new OrderStatusHistoryDto
@@ -593,7 +692,7 @@ public class OrderService : IOrderService
                 Tax = i.Tax.ToDecimal(),
                 LineTotal = i.LineTotal.ToDecimal()
             }).ToList(),
-            GrandTotal = Math.Max(0m, order.ItemsSubtotal.ToDecimal() - order.Discount.ToDecimal() + order.Tax.ToDecimal())
+            GrandTotal = Math.Max(0m, order.ItemsSubtotal.ToDecimal() - order.Discount.ToDecimal() + order.Tax.ToDecimal() + order.ShippingCharge.ToDecimal() + order.PackingCharges.ToDecimal())
         };
     }
 
@@ -881,63 +980,105 @@ public class OrderService : IOrderService
             ?? throw new InvalidOperationException("Failed to retrieve updated order");
     }
 
-    private const string DeliveryMethodStandard = "standard";
-    private const string DeliveryMethodExpress = "express";
+    // Owner's real Sivakasi logistics: goods travel by lorry and the customer settles the
+    // freight directly with the transport company when collecting the parcel. The store
+    // therefore has exactly ONE delivery option and NEVER charges for delivery (it is not
+    // "free shipping" — no shipping is sold at all).
+    //
+    // The legacy storefront codes ("standard", "express", "godown-pickup", "parcel-service")
+    // are still accepted on input and normalize to "transport", so in-flight clients and
+    // orders already stored in the database keep working.
+    private const string DeliveryMethodTransport = "transport";
+    private const string TransportName = "Transport Delivery";
 
-    private sealed record DeliverySettings(decimal StandardCharge, decimal ExpressCharge, decimal FreeShippingThreshold);
+    private const string DefaultTransportNote = "Freight is payable directly to the transport company when you collect the parcel.";
+    private const int DefaultEtaMinDays = 7;
+    private const int DefaultEtaMaxDays = 14;
 
-    private static string NormalizeDeliveryMethod(string? deliveryMethod) =>
-        string.Equals(deliveryMethod?.Trim(), DeliveryMethodExpress, StringComparison.OrdinalIgnoreCase)
-            ? DeliveryMethodExpress
-            : DeliveryMethodStandard;
+    private const string TransportNoteSettingKey = "Delivery.TransportNote";
+    private const string EtaMinDaysSettingKey = "Delivery.EtaMinDays";
+    private const string EtaMaxDaysSettingKey = "Delivery.EtaMaxDays";
+
+    private sealed record DeliverySettings(string TransportNote, int EtaMinDays, int EtaMaxDays);
+
+    /// <summary>
+    /// Maps any accepted delivery code onto the single canonical code stored on the order.
+    /// Every legacy alias (standard / express / godown-pickup / parcel-service) and anything
+    /// unrecognised normalizes to "transport".
+    /// </summary>
+    private static string NormalizeDeliveryMethod(string? deliveryMethod) => DeliveryMethodTransport;
 
     private static (int EtaMinDays, int EtaMaxDays) GetDeliveryEta(string? deliveryMethod) =>
-        string.Equals(deliveryMethod?.Trim(), DeliveryMethodExpress, StringComparison.OrdinalIgnoreCase) ? (1, 2) : (3, 5);
+        (DefaultEtaMinDays, DefaultEtaMaxDays);
 
     private async Task<DeliverySettings> GetDeliverySettingsAsync(CancellationToken cancellationToken)
     {
         var settings = await _context.SystemSettings
             .AsNoTracking()
-            .Where(s => (s.Key == "Delivery.StandardCharge" || s.Key == "Delivery.ExpressCharge" || s.Key == "Shipping.FreeShippingThreshold") && !s.IsDeleted)
+            .Where(s => (s.Key == TransportNoteSettingKey || s.Key == EtaMinDaysSettingKey || s.Key == EtaMaxDaysSettingKey) && !s.IsDeleted)
             .ToDictionaryAsync(s => s.Key, s => s.Value, cancellationToken);
 
-        decimal Parse(string key, decimal fallback) =>
+        int ParseInt(string key, int fallback) =>
             settings.TryGetValue(key, out var raw)
-            && decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            && int.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            && value >= 0
                 ? value
                 : fallback;
 
+        var note = settings.TryGetValue(TransportNoteSettingKey, out var rawNote) && !string.IsNullOrWhiteSpace(rawNote)
+            ? rawNote.Trim()
+            : DefaultTransportNote;
+
         return new DeliverySettings(
-            Parse("Delivery.StandardCharge", 0m),
-            Parse("Delivery.ExpressCharge", 90m),
-            Parse("Shipping.FreeShippingThreshold", 3000m));
+            note,
+            ParseInt(EtaMinDaysSettingKey, DefaultEtaMinDays),
+            ParseInt(EtaMaxDaysSettingKey, DefaultEtaMaxDays));
     }
 
+    /// <summary>
+    /// Exactly one option, always at zero charge. The <paramref name="subtotal"/> argument is
+    /// retained for wire compatibility with existing clients but no longer affects the result
+    /// (there is no free-shipping threshold any more — nothing is ever charged for delivery).
+    /// </summary>
     public async Task<List<DeliveryOptionDto>> GetDeliveryOptionsAsync(decimal subtotal, CancellationToken cancellationToken = default)
     {
         var settings = await GetDeliverySettingsAsync(cancellationToken);
-        var standardCharge = subtotal >= settings.FreeShippingThreshold ? 0m : settings.StandardCharge;
 
         return new List<DeliveryOptionDto>
         {
             new()
             {
-                Code = DeliveryMethodStandard,
-                Name = "Standard Delivery (3-5 Days)",
-                Charge = standardCharge,
-                EtaMinDays = 3,
-                EtaMaxDays = 5
-            },
-            new()
-            {
-                Code = DeliveryMethodExpress,
-                Name = "Express Delivery (1-2 Days)",
-                Charge = settings.ExpressCharge,
-                EtaMinDays = 1,
-                EtaMaxDays = 2
+                Code = DeliveryMethodTransport,
+                Name = TransportName,
+                Charge = 0m,
+                EtaMinDays = settings.EtaMinDays,
+                EtaMaxDays = settings.EtaMaxDays,
+                Note = settings.TransportNote
             }
         };
     }
+
+    private const string PackingChargePercentSettingKey = "Order.PackingChargePercent";
+    private const decimal DefaultPackingChargePercent = 1.5m;
+
+    /// <summary>Packing charge rate (a percentage, e.g. 1.5 for 1.5%) from system settings.</summary>
+    private async Task<decimal> GetPackingChargePercentAsync(CancellationToken cancellationToken)
+    {
+        var raw = await _context.SystemSettings
+            .AsNoTracking()
+            .Where(s => s.Key == PackingChargePercentSettingKey && !s.IsDeleted)
+            .Select(s => s.Value)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return !string.IsNullOrWhiteSpace(raw)
+            && decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var percent)
+            && percent >= 0m
+                ? percent
+                : DefaultPackingChargePercent;
+    }
+
+    private static Money CalculatePackingCharges(Money itemsSubtotal, decimal percent) =>
+        Money.FromDecimal(Math.Round(itemsSubtotal.ToDecimal() * percent / 100m, 2, MidpointRounding.AwayFromZero));
 
     private async Task<Customer?> ResolveCurrentCustomerAsync(CancellationToken cancellationToken)
     {
@@ -970,15 +1111,18 @@ public class OrderService : IOrderService
             ItemsSubtotal = o.ItemsSubtotal.ToDecimal(),
             Discount = o.Discount.ToDecimal(),
             Tax = o.Tax.ToDecimal(),
-            ShippingCharge = 0m,
+            ShippingCharge = o.ShippingCharge.ToDecimal(),
+            PackingCharges = o.PackingCharges.ToDecimal(),
+            PackingChargePercent = o.PackingChargePercent,
             GrandTotal = o.ItemsSubtotal.ToDecimal() > 0
-                ? Math.Max(0m, o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal() + o.Tax.ToDecimal())
+                ? Math.Max(0m, o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal() + o.Tax.ToDecimal() + o.ShippingCharge.ToDecimal() + o.PackingCharges.ToDecimal())
                 : o.GrandTotal.ToDecimal(),
             CouponCode = o.CouponCode,
             Notes = o.Notes,
+            CarrierName = o.CarrierName,
             TrackingNumber = o.TrackingNumber,
             PlacedAtUtc = o.PlacedAtUtc,
-            DeliveryMethod = o.DeliveryMethod,
+            DeliveryMethod = NormalizeDeliveryMethod(o.DeliveryMethod),
             ExpectedDeliveryFrom = o.PlacedAtUtc.AddDays(etaMin),
             ExpectedDeliveryTo = o.PlacedAtUtc.AddDays(etaMax),
             UtrNumber = o.UtrNumber,

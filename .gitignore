@@ -37,3 +37,8 @@ bld/
 ## OS generated
 .DS_Store
 Thumbs.db
+
+# Local database snapshots/backups (never commit — they are large binaries)
+*.bak
+*.bak-*
+*.db.bak*

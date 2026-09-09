@@ -21,12 +21,17 @@ public class SettingsService : ISettingsService
     // Hard whitelist for the anonymous storefront settings endpoint.
     // ONLY keys matching these prefixes/exact keys are ever exposed publicly —
     // never widen this list with security-sensitive groups (Jwt, RateLimiting, Smtp, etc.).
+    // "Payment." carries the bank/UPI details the storefront prints on the payment screen
+    // (bank name, account name, account number, IFSC). Any payment SECRET (gateway keys,
+    // webhook signing secrets) must be stored with IsEncrypted = true — encrypted settings
+    // are filtered out of this endpoint below and never leave the server.
     private static readonly string[] PublicKeyPrefixes =
     {
         "Store.",
         "Website.",
         "Delivery.",
-        "Shipping."
+        "Shipping.",
+        "Payment."
     };
 
     private static readonly string[] PublicExactKeys =

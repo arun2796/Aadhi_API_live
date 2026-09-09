@@ -30,6 +30,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<LoginHistory> LoginHistories => Set<LoginHistory>();
     public DbSet<RateLimitLog> RateLimitLogs => Set<RateLimitLog>();
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+    public DbSet<ProductComboItem> ProductComboItems => Set<ProductComboItem>();
     public DbSet<ProductReview> ProductReviews => Set<ProductReview>();
     public DbSet<PromotionRedemption> PromotionRedemptions => Set<PromotionRedemption>();
     public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
@@ -168,6 +169,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(o => o.PlacedAtUtc);
 
             b.Property(o => o.OrderNumber).IsRequired().HasMaxLength(50);
+            b.Property(o => o.PackingChargePercent).HasPrecision(5, 2);
 
             b.OwnsOne(o => o.ShippingAddress);
             b.OwnsOne(o => o.BillingAddress);
@@ -232,6 +234,28 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
                 .WithMany(c => c.ProductCategories)
                 .HasForeignKey(pc => pc.CategoryId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ProductComboItem Configuration — combo / gift-box composition
+        builder.Entity<ProductComboItem>(b =>
+        {
+            b.HasKey(ci => ci.Id);
+            b.HasIndex(ci => ci.ComboProductId);
+            b.HasIndex(ci => new { ci.ComboProductId, ci.ComponentProductId }).IsUnique();
+
+            // Deleting the combo removes its composition rows...
+            b.HasOne(ci => ci.ComboProduct)
+                .WithMany(p => p.ComboItems)
+                .HasForeignKey(ci => ci.ComboProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // ...but a component product must never be deleted out from under a combo.
+            b.HasOne(ci => ci.ComponentProduct)
+                .WithMany()
+                .HasForeignKey(ci => ci.ComponentProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            b.HasQueryFilter(ci => !ci.IsDeleted);
         });
 
         // ProductReview Configuration

@@ -392,6 +392,13 @@ public static class DatabaseInitializer
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
                     }
+                    else if (migrationId.Contains("AddProductComboItems") && await TableExistsAsync(connection, "ProductComboItems", cancellationToken))
+                    {
+                        // A database created by EnsureCreated from the current model already has the
+                        // combo table, so the CreateTable in this migration would fail. Stamp it.
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
                 }
 
                 logger.LogWarning(

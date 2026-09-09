@@ -50,13 +50,24 @@ public class Order : AggregateRoot<Guid>
     public Money Discount { get; set; } = Money.Zero();
     public Money Tax { get; set; } = Money.Zero();
     public Money ShippingCharge { get; set; } = Money.Zero();
+
+    // Packing / handling charge billed as a real order line (percentage of ItemsSubtotal,
+    // rate from the SystemSettings key Order.PackingChargePercent). The rate is snapshotted
+    // alongside the amount: rounding to paise means the amount alone cannot reproduce the rate
+    // exactly on small orders, and the rate must stay historically accurate when the setting changes.
+    public Money PackingCharges { get; set; } = Money.Zero();
+    public decimal PackingChargePercent { get; set; }
     public Money GrandTotal { get; set; } = Money.Zero();
 
     public string? CouponCode { get; set; }
     public string? Notes { get; set; }
+
+    // Dispatch: transport company / parcel service the consignment was handed to,
+    // and the LR (lorry receipt) / waybill number issued by that carrier.
+    public string? CarrierName { get; set; }
     public string? TrackingNumber { get; set; }
     public DateTime PlacedAtUtc { get; set; } = DateTime.UtcNow;
-    public string DeliveryMethod { get; set; } = "standard"; // standard | express
+    public string DeliveryMethod { get; set; } = "transport"; // transport (the only method; legacy codes normalize to it)
     public bool RewardPointsAwarded { get; set; }
 
     // UPI QR Code Payment Proof & Verification

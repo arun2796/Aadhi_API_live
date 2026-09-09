@@ -321,8 +321,9 @@ public class Phase56CriticalScenariosTests : IDisposable
         Assert.Equal(2, dashboard.TotalOrders);
         Assert.Equal(2, salesReport.TotalOrders);
         Assert.Equal(dashboard.TotalSales, salesReport.TotalSales);
-        // 5 units @ 200 = 1000 subtotal + 18% GST (180) + 0 delivery (Delivery.StandardCharge default 0 for To-Pay transport) = 1180
-        Assert.Equal(1180m, dashboard.TotalSales);
+        // 5 units @ 200 = 1000 subtotal + 18% GST (180) + 0 delivery (To-Pay transport freight)
+        //               + 1.5% packing charges on the subtotal (15) = 1195
+        Assert.Equal(1195m, dashboard.TotalSales);
     }
     #endregion
 

@@ -79,7 +79,35 @@ public class Product : AggregateRoot<Guid>
     public ICollection<ProductCategory> ProductCategories { get; set; } = new List<ProductCategory>();
     public ICollection<ProductReview> Reviews { get; set; } = new List<ProductReview>();
 
+    /// <summary>
+    /// The products this one is composed of when it is a combo / gift box. Empty for a normal
+    /// product. A product that has combo items may not itself be used as a component of another
+    /// combo (no nesting).
+    /// </summary>
+    public ICollection<ProductComboItem> ComboItems { get; set; } = new List<ProductComboItem>();
+
     public int AvailableQuantity => Math.Max(0, StockQuantity - ReservedQuantity);
+}
+
+/// <summary>
+/// One line of a combo / gift-box composition: "this combo contains N of that product".
+/// The combo's selling price stays fully manual (Product.Price) — the summed component value is
+/// only computed for display so the owner can decide what to charge and what to strike through.
+/// </summary>
+public class ProductComboItem : BaseEntity<Guid>
+{
+    /// <summary>The combo / gift box being composed.</summary>
+    public Guid ComboProductId { get; set; }
+    public Product ComboProduct { get; set; } = null!;
+
+    /// <summary>A product included in the combo.</summary>
+    public Guid ComponentProductId { get; set; }
+    public Product ComponentProduct { get; set; } = null!;
+
+    /// <summary>How many of the component the combo contains. Always at least 1.</summary>
+    public int Quantity { get; set; } = 1;
+
+    public int SortOrder { get; set; }
 }
 
 public class ProductCategory : BaseEntity<Guid>

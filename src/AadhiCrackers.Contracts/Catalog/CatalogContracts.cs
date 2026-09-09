@@ -98,6 +98,24 @@ public class ProductDto
     public string? PrimaryImageUrl { get; set; }
     public double Rating { get; set; } = 4.8;
     public int ReviewCount { get; set; } = 86;
+
+    /// <summary>True when this product is built from other products (has combo items).</summary>
+    public bool IsCombo { get; set; }
+
+    /// <summary>How many component lines the combo has (0 for a normal product).</summary>
+    public int ComboItemCount { get; set; }
+}
+
+/// <summary>One component line of a combo / gift box, priced at the component's CURRENT price.</summary>
+public class ComboItemDto
+{
+    public Guid ComponentProductId { get; set; }
+    public string ProductName { get; set; } = string.Empty;
+    public string Sku { get; set; } = string.Empty;
+    public string? ImageUrl { get; set; }
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal LineTotal { get; set; }
 }
 
 public class ProductDetailDto : ProductDto
@@ -108,6 +126,16 @@ public class ProductDetailDto : ProductDto
     public int MaxOrderQuantity { get; set; }
     public List<ProductImageDto> Images { get; set; } = new();
     public List<ProductDto> RelatedProducts { get; set; } = new();
+
+    /// <summary>The products this combo / gift box is built from. Empty for a normal product.</summary>
+    public List<ComboItemDto> ComboItems { get; set; } = new();
+
+    /// <summary>
+    /// Sum of the component line totals at their current prices. Purely informational — the
+    /// server never derives Price or CompareAtPrice from it; the admin UI can offer it as the
+    /// struck-through "worth" while the owner types the real selling price by hand.
+    /// </summary>
+    public decimal ComboItemsTotal { get; set; }
 }
 
 public class ProductFilterRequest
@@ -156,6 +184,19 @@ public class CreateProductRequest
     public bool IsNewArrival { get; set; }
     public string? SafetyInformation { get; set; }
     public List<string> ImageUrls { get; set; } = new();
+
+    /// <summary>
+    /// The combo / gift-box composition. Authoritative: the stored items are replaced with
+    /// exactly what is sent, and an empty list means "not a combo" (clears any existing items
+    /// and resets ProductType to Simple). A non-empty list forces ProductType to Bundle.
+    /// </summary>
+    public List<CreateComboItemRequest> ComboItems { get; set; } = new();
+}
+
+public class CreateComboItemRequest
+{
+    public Guid ComponentProductId { get; set; }
+    public int Quantity { get; set; } = 1;
 }
 
 public class UpdateProductRequest : CreateProductRequest

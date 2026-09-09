@@ -14,7 +14,28 @@ public static class DatabaseSeeder
     private const string DefaultAdminEmail = "admin@aadhicrackers.com";
     private const string DefaultAdminPassword = "Admin@123";
 
-    
+    /// <summary>The one delivery note the storefront shows. Mirrors OrderService.DefaultTransportNote.</summary>
+    private const string TransportNoteDefault = "Freight is payable directly to the transport company when you collect the parcel.";
+
+    private const string DeprecatedChargeDescription =
+        "DEPRECATED — not read by any code. The store charges nothing for delivery: goods travel by lorry and the customer pays the transport company directly on collection. Pinned to 0.00.";
+
+    /// <summary>
+    /// Legacy delivery-charge settings. Kept seeded (the public settings whitelist exposes the
+    /// Shipping./Delivery. prefixes and old storefront builds still read them) but forced to
+    /// "0.00" on every boot so a stale non-zero value can never resurface.
+    /// </summary>
+    private static readonly string[] DeprecatedDeliveryChargeKeys =
+    {
+        "Shipping.FreeShippingThreshold",
+        "Shipping.StandardCharge",
+        "Delivery.StandardCharge",
+        "Delivery.ExpressCharge",
+        "Delivery.GodownPickupCharge",
+        "Delivery.ParcelServiceCharge"
+    };
+
+
     public static async Task SeedAsync(
         AadhiDbContext context,
         UserManager<ApplicationUser> userManager,
@@ -86,10 +107,26 @@ public static class DatabaseSeeder
                 new() { Key = "Store.Email", Value = "support@aadhicrackers.com", Group = "Store", Description = "Support Email" },
                 new() { Key = "Store.Address", Value = "123, West Street, Sivanandapuram, Coimbatore, Tamil Nadu - 641012", Group = "Store", Description = "Physical Store Address" },
                 new() { Key = "Tax.GstRate", Value = "18.00", Group = "Tax", Description = "Default GST Rate for Fireworks" },
-                new() { Key = "Shipping.FreeShippingThreshold", Value = "3000.00", Group = "Shipping", Description = "Free shipping order minimum (standard delivery only)" },
-                new() { Key = "Shipping.StandardCharge", Value = "0.00", Group = "Shipping", Description = "Standard delivery charge" },
-                new() { Key = "Delivery.StandardCharge", Value = "0.00", Group = "Shipping", Description = "Standard transport delivery charge (To-Pay freight on collection)" },
-                new() { Key = "Delivery.ExpressCharge", Value = "90.00", Group = "Shipping", Description = "Express delivery charge (1-2 days); never free" },
+                // ── Delivery: the store never charges for delivery ──────────────────────────
+                // Goods travel by lorry and the customer settles the freight directly with the
+                // transport company on collection, so every charge key below is DEPRECATED,
+                // pinned to 0.00 and read by nothing. They stay seeded only because the public
+                // settings whitelist exposes the whole "Shipping."/"Delivery." prefix and older
+                // storefront builds still look them up.
+                new() { Key = "Shipping.FreeShippingThreshold", Value = "0.00", Group = "Shipping", Description = DeprecatedChargeDescription + " There is no free-shipping threshold — delivery is never charged at all." },
+                new() { Key = "Shipping.StandardCharge", Value = "0.00", Group = "Shipping", Description = DeprecatedChargeDescription },
+                new() { Key = "Delivery.StandardCharge", Value = "0.00", Group = "Shipping", Description = DeprecatedChargeDescription },
+                new() { Key = "Delivery.ExpressCharge", Value = "0.00", Group = "Shipping", Description = DeprecatedChargeDescription },
+                new() { Key = "Delivery.GodownPickupCharge", Value = "0.00", Group = "Shipping", Description = DeprecatedChargeDescription },
+                new() { Key = "Delivery.ParcelServiceCharge", Value = "0.00", Group = "Shipping", Description = DeprecatedChargeDescription },
+                new() { Key = "Delivery.TransportNote", Value = TransportNoteDefault, Group = "Shipping", Description = "Customer-facing note returned by GET /orders/delivery-options explaining that freight is settled with the transport company." },
+                new() { Key = "Delivery.EtaMinDays", Value = "7", Group = "Shipping", Description = "Minimum transport delivery ETA in days (GET /orders/delivery-options)." },
+                new() { Key = "Delivery.EtaMaxDays", Value = "14", Group = "Shipping", Description = "Maximum transport delivery ETA in days (GET /orders/delivery-options)." },
+                new() { Key = "Order.PackingChargePercent", Value = "1.5", Group = "Order", Description = "Packing charges billed as a percentage of the items subtotal" },
+                new() { Key = "Payment.BankName", Value = "AXIS BANK LTD", Group = "Payment", Description = "Bank name shown on the customer payment screen" },
+                new() { Key = "Payment.AccountName", Value = "AADHI CRACKERS", Group = "Payment", Description = "Bank account holder name shown on the customer payment screen" },
+                new() { Key = "Payment.AccountNumber", Value = "926020003006172", Group = "Payment", Description = "Bank account number shown on the customer payment screen" },
+                new() { Key = "Payment.IfscCode", Value = "UTIB0000089", Group = "Payment", Description = "Bank IFSC code shown on the customer payment screen" },
                 new() { Key = "RateLimiting.Enabled", Value = "true", Group = "Security", Description = "Enable API Rate Limiting" }
             };
 
@@ -104,10 +141,17 @@ public static class DatabaseSeeder
                     context.SystemSettings.Add(setting);
                     addedSettings = true;
                 }
-                else if (setting.Key == "Delivery.StandardCharge" && (existing.Value == "40.00" || existing.Value == "40"))
+                else if (DeprecatedDeliveryChargeKeys.Contains(setting.Key))
                 {
-                    existing.Value = "0.00";
-                    addedSettings = true;
+                    // Repair pass: a stale non-zero charge (or a stale description) from an older
+                    // build must never survive a boot — nothing is charged for delivery any more.
+                    if (existing.Value != "0.00" || existing.Description != setting.Description)
+                    {
+                        existing.Value = "0.00";
+                        existing.Description = setting.Description;
+                        existing.UpdatedAtUtc = DateTime.UtcNow;
+                        addedSettings = true;
+                    }
                 }
             }
 
@@ -124,7 +168,8 @@ public static class DatabaseSeeder
             var shippingUpdated = false;
             foreach (var o in ordersWithShipping)
             {
-                var expectedTotal = Math.Max(0m, o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal() + o.Tax.ToDecimal());
+                // Packing charges are a real billed line and must survive this repair pass.
+                var expectedTotal = Math.Max(0m, o.ItemsSubtotal.ToDecimal() - o.Discount.ToDecimal() + o.Tax.ToDecimal() + o.PackingCharges.ToDecimal());
                 if (o.ShippingCharge.ToDecimal() > 0 || o.GrandTotal.ToDecimal() != expectedTotal)
                 {
                     o.ShippingCharge = Money.Zero();

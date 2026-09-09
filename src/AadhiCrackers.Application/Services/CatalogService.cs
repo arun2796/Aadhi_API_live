@@ -373,6 +373,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Images)
             .Include(p => p.ProductCategories)
             .Include(p => p.Reviews)
+            .Include(p => p.ComboItems)
             .Where(p => !p.IsDeleted);
 
         if (filter.ProductType.HasValue)
@@ -436,13 +437,7 @@ public class CatalogService : ICatalogService
 
     public async Task<ProductDetailDto?> GetProductBySlugAsync(string slug, CancellationToken cancellationToken = default)
     {
-        var product = await _context.Products
-            .AsNoTracking()
-            .Include(p => p.Category)
-            .Include(p => p.Brand)
-            .Include(p => p.Images)
-            .Include(p => p.ProductCategories)
-            .Include(p => p.Reviews)
+        var product = await ProductDetailQuery()
             .FirstOrDefaultAsync(p => p.Slug.ToLower() == slug.ToLower() && !p.IsDeleted, cancellationToken);
 
         if (product == null) return null;
@@ -453,6 +448,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
+            .Include(p => p.ComboItems)
             .Where(p => p.CategoryId == product.CategoryId && p.Id != product.Id && p.IsActive && !p.IsDeleted)
             .Take(4)
             .Select(p => MapToProductDto(p))
@@ -463,19 +459,29 @@ public class CatalogService : ICatalogService
 
     public async Task<ProductDetailDto?> GetProductByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var product = await _context.Products
-            .AsNoTracking()
-            .Include(p => p.Category)
-            .Include(p => p.Brand)
-            .Include(p => p.Images)
-            .Include(p => p.ProductCategories)
-            .Include(p => p.Reviews)
+        var product = await ProductDetailQuery()
             .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, cancellationToken);
 
         if (product == null) return null;
 
         return MapToProductDetailDto(product, new List<ProductDto>());
     }
+
+    /// <summary>
+    /// The full graph a product detail response needs. Combo components are loaded (with their
+    /// images) so ComboItemsTotal can be summed from their CURRENT prices.
+    /// </summary>
+    private IQueryable<Product> ProductDetailQuery() =>
+        _context.Products
+            .AsNoTracking()
+            .Include(p => p.Category)
+            .Include(p => p.Brand)
+            .Include(p => p.Images)
+            .Include(p => p.ProductCategories)
+            .Include(p => p.Reviews)
+            .Include(p => p.ComboItems.OrderBy(ci => ci.SortOrder))
+                .ThenInclude(ci => ci.ComponentProduct)
+                    .ThenInclude(cp => cp.Images);
 
     public async Task<ProductDetailDto> CreateProductAsync(CreateProductRequest request, CancellationToken cancellationToken = default)
     {
@@ -554,6 +560,9 @@ public class CatalogService : ICatalogService
             sortOrder++;
         }
 
+        // Combo / gift-box composition (also flips ProductType to Bundle when non-empty).
+        await ApplyComboItemsAsync(product, request.ComboItems, cancellationToken);
+
         _context.Products.Add(product);
 
 
@@ -579,6 +588,7 @@ public class CatalogService : ICatalogService
         var product = await _context.Products
             .Include(p => p.Images)
             .Include(p => p.ProductCategories)
+            .Include(p => p.ComboItems)
             .FirstOrDefaultAsync(p => p.Id == request.Id && !p.IsDeleted, cancellationToken)
             ?? throw new ResourceNotFoundException(nameof(Product), request.Id);
 
@@ -644,22 +654,27 @@ public class CatalogService : ICatalogService
             }
         }
 
-        if (request.ImageUrls.Count > 0)
+        // The image list is authoritative: the admin product form always submits the
+        // complete gallery, so an empty list means "this product has no images" and
+        // must clear them (previously an empty list was ignored, making it impossible
+        // to remove the last image).
+        product.Images.Clear();
+        int sortOrder = 0;
+        foreach (var url in request.ImageUrls)
         {
-            product.Images.Clear();
-            int sortOrder = 0;
-            foreach (var url in request.ImageUrls)
+            product.Images.Add(new ProductImage
             {
-                product.Images.Add(new ProductImage
-                {
-                    ProductId = product.Id,
-                    Url = ImageUrlNormalizer.Normalize(url) ?? url,
-                    SortOrder = sortOrder,
-                    IsPrimary = sortOrder == 0
-                });
-                sortOrder++;
-            }
+                ProductId = product.Id,
+                Url = ImageUrlNormalizer.Normalize(url) ?? url,
+                SortOrder = sortOrder,
+                IsPrimary = sortOrder == 0
+            });
+            sortOrder++;
         }
+
+        // The combo list is authoritative in the same way the image list is: an empty list means
+        // "this is not a combo" and clears the composition (returning ProductType to Simple).
+        await ApplyComboItemsAsync(product, request.ComboItems, cancellationToken);
 
         await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
 
@@ -710,6 +725,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
+            .Include(p => p.ComboItems)
             .Where(p => p.IsFeatured && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -722,6 +738,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
+            .Include(p => p.ComboItems)
             .Where(p => p.IsBestSeller && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -734,6 +751,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
+            .Include(p => p.ComboItems)
             .Where(p => p.IsNewArrival && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
@@ -746,7 +764,11 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
-            .Where(p => (p.ProductType == ProductType.Bundle || p.Category.Name.ToLower().Contains("gift box") || p.Name.ToLower().Contains("gift box")) && p.IsActive && !p.IsDeleted)
+            .Include(p => p.ComboItems)
+            // A product with a real composition is a gift box no matter what it is called,
+            // so it is included alongside the historical name/category/type matching.
+            .Where(p => (p.ComboItems.Any() || p.ProductType == ProductType.Bundle || p.Category.Name.ToLower().Contains("gift box") || p.Name.ToLower().Contains("gift box")) && p.IsActive && !p.IsDeleted)
+            .OrderByDescending(p => p.ComboItems.Any())
             .Take(count)
             .Select(p => MapToProductDto(p))
             .ToListAsync(cancellationToken);
@@ -758,7 +780,11 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
-            .Where(p => (p.Category.Name.ToLower().Contains("combo") || p.Name.ToLower().Contains("combo") || p.DiscountValue > 20) && p.IsActive && !p.IsDeleted)
+            .Include(p => p.ComboItems)
+            // Real combos (products that actually have components) come first, then the
+            // historical name/category/discount matching so nothing that used to appear drops off.
+            .Where(p => (p.ComboItems.Any() || p.Category.Name.ToLower().Contains("combo") || p.Name.ToLower().Contains("combo") || p.DiscountValue > 20) && p.IsActive && !p.IsDeleted)
+            .OrderByDescending(p => p.ComboItems.Any())
             .Take(count)
             .Select(p => MapToProductDto(p))
             .ToListAsync(cancellationToken);
@@ -770,6 +796,7 @@ public class CatalogService : ICatalogService
             .Include(p => p.Brand)
             .Include(p => p.Images)
             .Include(p => p.Reviews)
+            .Include(p => p.ComboItems)
             .Where(p => p.IsActive && !p.IsDeleted && (p.StockQuantity - p.ReservedQuantity) <= p.ReorderLevel)
             .OrderBy(p => (p.StockQuantity - p.ReservedQuantity))
             .Take(count)
@@ -785,6 +812,9 @@ public class CatalogService : ICatalogService
         var approvedReviews = p.Reviews.Where(r => r.Status == "Approved" && !r.IsDeleted).ToList();
         var rating = approvedReviews.Any() ? Math.Round(approvedReviews.Average(r => r.Rating), 1) : 0.0;
         var reviewCount = approvedReviews.Count;
+
+        // A real combo is one that HAS components, regardless of its name or category.
+        var comboItemCount = p.ComboItems.Count(ci => !ci.IsDeleted);
 
         return new ProductDto
         {
@@ -816,7 +846,30 @@ public class CatalogService : ICatalogService
             IsNewArrival = p.IsNewArrival,
             PrimaryImageUrl = primaryImage,
             Rating = rating,
-            ReviewCount = reviewCount
+            ReviewCount = reviewCount,
+            IsCombo = comboItemCount > 0,
+            ComboItemCount = comboItemCount
+        };
+    }
+
+    private static List<ProductComboItem> LiveComboItems(Product p) =>
+        p.ComboItems.Where(ci => !ci.IsDeleted).OrderBy(ci => ci.SortOrder).ToList();
+
+    private static ComboItemDto MapToComboItemDto(ProductComboItem ci)
+    {
+        var component = ci.ComponentProduct;
+        var unitPrice = component.Price.ToDecimal();
+
+        return new ComboItemDto
+        {
+            ComponentProductId = ci.ComponentProductId,
+            ProductName = component.Name,
+            Sku = component.SKU,
+            ImageUrl = component.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary)?.Url
+                ?? component.Images.OrderBy(i => i.SortOrder).FirstOrDefault()?.Url,
+            Quantity = ci.Quantity,
+            UnitPrice = unitPrice,
+            LineTotal = unitPrice * ci.Quantity
         };
     }
 
@@ -824,8 +877,19 @@ public class CatalogService : ICatalogService
     {
         var baseDto = MapToProductDto(p);
 
+        // A soft-deleted component is filtered out by the Product query filter and arrives as
+        // null; skip those lines rather than blowing up on an orphaned composition row.
+        var comboItems = LiveComboItems(p)
+            .Where(ci => ci.ComponentProduct != null)
+            .Select(MapToComboItemDto)
+            .ToList();
+
         return new ProductDetailDto
         {
+            ComboItems = comboItems,
+            ComboItemsTotal = comboItems.Sum(ci => ci.LineTotal),
+            IsCombo = comboItems.Count > 0,
+            ComboItemCount = comboItems.Count,
             Id = baseDto.Id,
             SKU = baseDto.SKU,
             Name = baseDto.Name,
@@ -869,6 +933,110 @@ public class CatalogService : ICatalogService
             }).ToList(),
             RelatedProducts = related
         };
+    }
+
+    /// <summary>
+    /// Replaces the product's combo / gift-box composition with exactly what the request carries.
+    /// An empty (or absent) list clears the composition and drops the product back to Simple; a
+    /// non-empty one marks it as a Bundle. Rows that survive the edit are updated in place so the
+    /// unique (ComboProductId, ComponentProductId) index is never transiently violated.
+    ///
+    /// The selling price is NEVER touched here: Price and CompareAtPrice stay exactly as the owner
+    /// typed them. Only ProductDetailDto.ComboItemsTotal exposes what the parts are worth.
+    /// </summary>
+    private async Task ApplyComboItemsAsync(
+        Product product,
+        List<CreateComboItemRequest>? requestedItems,
+        CancellationToken cancellationToken)
+    {
+        var requested = requestedItems ?? new List<CreateComboItemRequest>();
+
+        foreach (var item in requested)
+        {
+            if (item.ComponentProductId == Guid.Empty)
+                throw new DomainException("Every combo item must point at a product. Please pick a product for each row.");
+
+            if (item.Quantity < 1)
+                throw new DomainException("Each combo item needs a quantity of at least 1.");
+
+            if (item.ComponentProductId == product.Id)
+                throw new DomainException($"'{product.Name}' cannot be an item inside itself. Remove it from the combo list.");
+        }
+
+        var duplicate = requested
+            .GroupBy(i => i.ComponentProductId)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicate != null)
+            throw new DomainException("The same product is listed twice in this combo. Increase that item's quantity instead of adding it again.");
+
+        var existing = product.ComboItems.ToList();
+
+        if (requested.Count == 0)
+        {
+            foreach (var stale in existing)
+            {
+                product.ComboItems.Remove(stale);
+            }
+
+            if (product.ProductType == ProductType.Bundle)
+            {
+                product.ProductType = ProductType.Simple;
+            }
+            return;
+        }
+
+        // A combo may not be built out of other combos, and a product that is already used as a
+        // component may not itself become one — either way that would nest compositions.
+        var alreadyAComponent = await _context.ProductComboItems
+            .AnyAsync(ci => ci.ComponentProductId == product.Id, cancellationToken);
+        if (alreadyAComponent)
+            throw new DomainException($"'{product.Name}' is already used as an item inside another combo, so it cannot be turned into a combo itself.");
+
+        var componentIds = requested.Select(i => i.ComponentProductId).ToList();
+        var components = await _context.Products
+            .AsNoTracking()
+            .Where(p => componentIds.Contains(p.Id) && !p.IsDeleted)
+            .Select(p => new { p.Id, p.Name, p.IsActive, IsItselfACombo = p.ComboItems.Any() })
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+
+        var sortOrder = 0;
+        foreach (var item in requested)
+        {
+            if (!components.TryGetValue(item.ComponentProductId, out var component))
+                throw new DomainException($"Combo item product '{item.ComponentProductId}' does not exist. Refresh the product list and try again.");
+
+            if (!component.IsActive)
+                throw new DomainException($"'{component.Name}' is inactive and cannot be added to a combo. Activate it first or remove it from the list.");
+
+            if (component.IsItselfACombo)
+                throw new DomainException($"'{component.Name}' is itself a combo. A combo cannot contain another combo — add its individual products instead.");
+
+            var match = existing.FirstOrDefault(e => e.ComponentProductId == item.ComponentProductId);
+            if (match != null)
+            {
+                match.Quantity = item.Quantity;
+                match.SortOrder = sortOrder;
+            }
+            else
+            {
+                product.ComboItems.Add(new ProductComboItem
+                {
+                    ComboProductId = product.Id,
+                    ComponentProductId = item.ComponentProductId,
+                    Quantity = item.Quantity,
+                    SortOrder = sortOrder
+                });
+            }
+
+            sortOrder++;
+        }
+
+        foreach (var stale in existing.Where(e => !componentIds.Contains(e.ComponentProductId)).ToList())
+        {
+            product.ComboItems.Remove(stale);
+        }
+
+        product.ProductType = ProductType.Bundle;
     }
 
     private static string GenerateSlug(string text)

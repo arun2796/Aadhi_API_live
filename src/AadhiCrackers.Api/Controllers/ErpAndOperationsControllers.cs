@@ -135,6 +135,19 @@ public class OrdersController : ControllerBase
         return Ok(ApiResponse<OrderDto>.Ok(order, "Order status updated successfully", _currentUser.CorrelationId));
     }
 
+    /// <summary>
+    /// Hands the consignment to a transport company / parcel service: records the carrier and
+    /// its LR (lorry receipt) / waybill number and moves the order to Shipped.
+    /// </summary>
+    [HttpPost("{id:guid}/dispatch")]
+    [Authorize(Policy = "RequireAdmin")]
+    [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
+    public async Task<ActionResult<ApiResponse<OrderDto>>> DispatchOrder(Guid id, [FromBody] DispatchOrderRequest request, CancellationToken cancellationToken)
+    {
+        var order = await _orderService.DispatchOrderAsync(id, request, cancellationToken);
+        return Ok(ApiResponse<OrderDto>.Ok(order, "Order dispatched successfully", _currentUser.CorrelationId));
+    }
+
     [HttpPost("{id:guid}/verify-payment")]
     [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]
