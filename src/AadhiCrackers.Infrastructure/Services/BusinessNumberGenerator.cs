@@ -53,16 +53,6 @@ public class BusinessNumberGenerator : IBusinessNumberGenerator
             cancellationToken);
     }
 
-    public async Task<string> GenerateEnquiryNumberAsync(CancellationToken cancellationToken = default)
-    {
-        var year = DateTime.UtcNow.Year;
-        var prefix = $"ENQ-{year}-";
-        return await GenerateNextNumberAsync(
-            _context.Enquiries.IgnoreQueryFilters().Where(e => e.EnquiryNumber.StartsWith(prefix)).Select(e => e.EnquiryNumber),
-            prefix,
-            cancellationToken);
-    }
-
     private static async Task<string> GenerateNextNumberAsync(
         IQueryable<string> existingNumbersQuery,
         string prefix,

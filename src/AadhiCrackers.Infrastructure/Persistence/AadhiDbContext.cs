@@ -35,8 +35,6 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
     public DbSet<OtpVerification> OtpVerifications => Set<OtpVerification>();
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
-    public DbSet<Enquiry> Enquiries => Set<Enquiry>();
-    public DbSet<EnquiryItem> EnquiryItems => Set<EnquiryItem>();
 
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
@@ -418,50 +416,6 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasQueryFilter(bn => !bn.IsDeleted);
         });
 
-        // Enquiry Configuration
-        builder.Entity<Enquiry>(b =>
-        {
-            b.HasKey(e => e.Id);
-            b.HasIndex(e => e.EnquiryNumber).IsUnique();
-            b.HasIndex(e => e.Status);
-            b.HasIndex(e => e.Source);
-            b.HasIndex(e => e.Phone);
-            b.HasIndex(e => e.CustomerId);
-            b.Property(e => e.EnquiryNumber).IsRequired().HasMaxLength(50);
-            b.Property(e => e.CustomerName).IsRequired().HasMaxLength(100);
-            b.Property(e => e.Phone).IsRequired().HasMaxLength(20);
-            b.Property(e => e.Email).HasMaxLength(150);
-            b.Property(e => e.Address).HasMaxLength(500);
-            b.Property(e => e.Notes).HasMaxLength(2000);
-
-            b.HasOne(e => e.Customer)
-                .WithMany()
-                .HasForeignKey(e => e.CustomerId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            b.HasMany(e => e.Items)
-                .WithOne(i => i.Enquiry)
-                .HasForeignKey(i => i.EnquiryId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            b.HasQueryFilter(e => !e.IsDeleted);
-        });
-
-        // EnquiryItem Configuration
-        builder.Entity<EnquiryItem>(b =>
-        {
-            b.HasKey(i => i.Id);
-            b.HasIndex(i => i.EnquiryId);
-            b.Property(i => i.ProductName).IsRequired().HasMaxLength(150);
-            b.Property(i => i.ExpectedPrice).HasPrecision(18, 2);
-            b.Property(i => i.QuotedPrice).HasPrecision(18, 2);
-            b.Property(i => i.Note).HasMaxLength(500);
-
-            b.HasOne(i => i.Product)
-                .WithMany()
-                .HasForeignKey(i => i.ProductId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

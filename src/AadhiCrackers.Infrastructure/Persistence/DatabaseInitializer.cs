@@ -387,7 +387,7 @@ public static class DatabaseInitializer
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
                     }
-                    else if (migrationId.Contains("AddEnquiriesAndBannerPlacement") && await TableExistsAsync(connection, "Enquiries", cancellationToken))
+                    else if (migrationId.Contains("AddEnquiriesAndBannerPlacement") && (await TableExistsAsync(connection, "Enquiries", cancellationToken) || await ColumnExistsAsync(connection, "HomepageBanners", "Placement", cancellationToken)))
                     {
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);

@@ -32,8 +32,6 @@ public interface IApplicationDbContext
     DbSet<HomepageBanner> HomepageBanners { get; }
     DbSet<OtpVerification> OtpVerifications { get; }
     DbSet<WishlistItem> WishlistItems { get; }
-    DbSet<Enquiry> Enquiries { get; }
-    DbSet<EnquiryItem> EnquiryItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);

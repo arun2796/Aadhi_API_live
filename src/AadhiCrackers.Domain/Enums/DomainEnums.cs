@@ -171,20 +171,3 @@ public enum PromotionStatus
     Disabled = 5
 }
 
-public enum EnquirySource
-{
-    Direct = 1,
-    Website = 2,
-    Phone = 3,
-    WhatsApp = 4
-}
-
-public enum EnquiryStatus
-{
-    New = 1,
-    Contacted = 2,
-    Quoted = 3,
-    Converted = 4,
-    Closed = 5
-}
-
