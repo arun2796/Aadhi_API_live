@@ -1,4 +1,4 @@
-using AadhiCrackers.Domain.Enums;
+﻿using AadhiCrackers.Domain.Enums;
 
 namespace AadhiCrackers.Contracts.Catalog;
 
@@ -14,6 +14,16 @@ public class CategoryDto
     public int DisplayOrder { get; set; }
     public bool IsActive { get; set; }
     public int ProductCount { get; set; }
+
+    /// <summary>
+    /// Owner-authored SEO overrides. These are stored on the Category entity and are settable via
+    /// Create/UpdateCategoryRequest, but were never projected onto this read DTO — so the storefront
+    /// could not use what an admin typed. The storefront falls back to the category name/description
+    /// when they are null.
+    /// </summary>
+    public string? SeoTitle { get; set; }
+    public string? SeoDescription { get; set; }
+
     public List<CategoryDto> SubCategories { get; set; } = new();
 }
 
@@ -151,6 +161,9 @@ public class ProductFilterRequest
     public bool? IsFeatured { get; set; }
     public bool? IsBestSeller { get; set; }
     public bool? IsNewArrival { get; set; }
+
+    public bool? ExcludeCombos { get; set; }
+
     public string? SortBy { get; set; } // price_asc, price_desc, popularity, new, name_asc
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
@@ -185,11 +198,7 @@ public class CreateProductRequest
     public string? SafetyInformation { get; set; }
     public List<string> ImageUrls { get; set; } = new();
 
-    /// <summary>
-    /// The combo / gift-box composition. Authoritative: the stored items are replaced with
-    /// exactly what is sent, and an empty list means "not a combo" (clears any existing items
-    /// and resets ProductType to Simple). A non-empty list forces ProductType to Bundle.
-    /// </summary>
+  
     public List<CreateComboItemRequest> ComboItems { get; set; } = new();
 }
 
@@ -202,4 +211,6 @@ public class CreateComboItemRequest
 public class UpdateProductRequest : CreateProductRequest
 {
     public Guid Id { get; set; }
+
+    public new List<CreateComboItemRequest>? ComboItems { get; set; }
 }

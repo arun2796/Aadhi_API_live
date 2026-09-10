@@ -34,9 +34,14 @@ public class SettingsService : ISettingsService
         "Payment."
     };
 
+    // Individually vetted non-prefixed keys. "Order.PackingChargePercent" is exposed so a client
+    // can LABEL the packing line (e.g. "Packing Charges (1.5%)"); the authoritative amount always
+    // comes from POST /cart/calculate, which now returns packingCharges and grandTotal outright.
+    // Only this one key from the "Order." group is public — the group as a whole is not.
     private static readonly string[] PublicExactKeys =
     {
-        "DeliveryZones.Config"
+        "DeliveryZones.Config",
+        "Order.PackingChargePercent"
     };
 
     private readonly IApplicationDbContext _context;
@@ -135,13 +140,18 @@ public interface ICartService
     Task<CartDto> CalculateCartAsync(List<AddToCartRequest> items, string? couponCode = null, CancellationToken cancellationToken = default);
 }
 
+
 public class CartService : ICartService
 {
     private readonly IApplicationDbContext _context;
+    private readonly IOrderPricingService _pricing;
+    private readonly ICurrentUserService? _currentUser;
 
-    public CartService(IApplicationDbContext context)
+    public CartService(IApplicationDbContext context, IOrderPricingService? pricing = null, ICurrentUserService? currentUser = null)
     {
         _context = context;
+        _pricing = pricing ?? new OrderPricingService(context);
+        _currentUser = currentUser;
     }
 
     public async Task<CartDto> CalculateCartAsync(List<AddToCartRequest> items, string? couponCode = null, CancellationToken cancellationToken = default)
@@ -154,6 +164,11 @@ public class CartService : ICartService
             .Include(p => p.Images)
             .Where(p => productIds.Contains(p.Id) && !p.IsDeleted)
             .ToDictionaryAsync(p => p.Id, cancellationToken);
+
+        // Lines are built exactly as OrderService.CreateOrderAsync builds them: unit price straight
+        // off the product, tax at the product's own rate. Same inputs => same money.
+        var lines = new List<PricedLine>();
+        var itemsSubtotal = Money.Zero();
 
         foreach (var item in items)
         {
@@ -176,22 +191,33 @@ public class CartService : ICartService
                     Quantity = qty,
                     MaxStock = avail
                 });
+
+                var line = new PricedLine(p.Price, qty, p.TaxRate);
+                lines.Add(line);
+                itemsSubtotal += line.LineTotalBeforeTax;
             }
         }
 
-        // Coupon calculation
-        if (!string.IsNullOrWhiteSpace(couponCode))
+        // Coupon resolution runs through the same gate the order does — including the
+        // per-customer usage limit when the caller is signed in.
+        var customerId = await _pricing.ResolveOrderCustomerIdAsync(_currentUser?.Email, cancellationToken);
+        var (promo, discount) = await _pricing.ResolveCouponAsync(couponCode, itemsSubtotal, customerId, cancellationToken);
+        if (promo != null)
         {
-            var promo = await _context.Promotions.FirstOrDefaultAsync(p => p.Code.ToUpper() == couponCode.Trim().ToUpper() && p.IsActive, cancellationToken);
-            if (promo != null && promo.IsValidForOrder(Money.FromDecimal(result.Subtotal)))
-            {
-                result.CouponCode = promo.Code;
-                result.Discount = promo.CalculateDiscount(Money.FromDecimal(result.Subtotal)).ToDecimal();
-            }
+            result.CouponCode = promo.Code;
         }
 
+        var packingChargePercent = await _pricing.GetPackingChargePercentAsync(cancellationToken);
+        var totals = _pricing.CalculateTotals(lines, discount, packingChargePercent);
+
+        result.ItemsSubtotal = totals.ItemsSubtotal.ToDecimal();
+        result.Discount = totals.Discount.ToDecimal();
+        result.Tax = totals.Tax.ToDecimal();
+        result.PackingCharges = totals.PackingCharges.ToDecimal();
+        result.PackingChargePercent = totals.PackingChargePercent;
         // Sivakasi Cracker deliveries are strictly dispatched on a To-Pay transport basis or local pickup; NO online delivery charges are charged.
-        result.ShippingCharge = 0m;
+        result.ShippingCharge = totals.ShippingCharge.ToDecimal();
+        result.GrandTotal = totals.GrandTotal.ToDecimal();
 
         return result;
     }

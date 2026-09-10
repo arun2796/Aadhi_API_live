@@ -131,8 +131,18 @@ public class NotificationService : INotificationService
     public Task SendPasswordResetOtpAsync(string recipient, string otpCode, CancellationToken cancellationToken = default)
     {
         // Logging stub — replace with SMS/email gateway integration in production.
+        //
+        // The OTP is a credential and is NEVER returned in an HTTP response. Developers who need it
+        // locally read it from this log line, which is compiled in ONLY for DEBUG builds: a Release
+        // build physically does not contain the code that prints it, so no environment variable,
+        // appsettings value or log-level change can turn the leak on in a deployed instance.
+#if DEBUG
         _logger.LogInformation("📧 [Notification Service] Password reset OTP {OtpCode} dispatched to {Recipient} (valid for 5 minutes)",
             otpCode, recipient);
+#else
+        _logger.LogInformation("📧 [Notification Service] Password reset OTP dispatched to {Recipient} (valid for 5 minutes)",
+            recipient);
+#endif
         return Task.CompletedTask;
     }
 }

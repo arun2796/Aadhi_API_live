@@ -740,6 +740,9 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<long?>("CompareAtPriceSnapshot")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("CostPriceSnapshot")
                         .HasColumnType("bigint");
 

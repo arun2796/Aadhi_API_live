@@ -1,4 +1,4 @@
-using AadhiCrackers.Application.Common;
+﻿using AadhiCrackers.Application.Common;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Contracts.Catalog;
 using AadhiCrackers.Contracts.Common;
@@ -97,6 +97,8 @@ public class CatalogService : ICatalogService
             DisplayOrder = c.DisplayOrder,
             IsActive = c.IsActive,
             ProductCount = c.Products.Count(p => p.IsActive && !p.IsDeleted),
+            SeoTitle = c.SeoTitle,
+            SeoDescription = c.SeoDescription,
             SubCategories = subCats
         };
     }
@@ -398,10 +400,16 @@ public class CatalogService : ICatalogService
             query = query.Where(p => p.BrandId == filter.BrandId.Value);
 
         if (filter.MinPrice.HasValue)
-            query = query.Where(p => p.Price.AmountMinor >= Money.FromDecimal(filter.MinPrice.Value).AmountMinor);
+        {
+            var minPrice = Money.FromDecimal(filter.MinPrice.Value);
+            query = query.Where(p => p.Price >= minPrice);
+        }
 
         if (filter.MaxPrice.HasValue)
-            query = query.Where(p => p.Price.AmountMinor <= Money.FromDecimal(filter.MaxPrice.Value).AmountMinor);
+        {
+            var maxPrice = Money.FromDecimal(filter.MaxPrice.Value);
+            query = query.Where(p => p.Price <= maxPrice);
+        }
 
         if (filter.InStockOnly == true)
             query = query.Where(p => p.StockQuantity > p.ReservedQuantity);
@@ -415,10 +423,14 @@ public class CatalogService : ICatalogService
         if (filter.IsNewArrival == true)
             query = query.Where(p => p.IsNewArrival);
 
+        if (filter.ExcludeCombos == true)
+            query = query.Where(p => !p.ComboItems.Any());
+
         query = filter.SortBy switch
         {
-            "price_asc" => query.OrderBy(p => p.Price.AmountMinor),
-            "price_desc" => query.OrderByDescending(p => p.Price.AmountMinor),
+
+            "price_asc" => query.OrderBy(p => EF.Property<long>(p, nameof(Product.Price))),
+            "price_desc" => query.OrderByDescending(p => EF.Property<long>(p, nameof(Product.Price))),
             "new" => query.OrderByDescending(p => p.CreatedAtUtc),
             "name_asc" => query.OrderBy(p => p.Name),
             _ => query.OrderByDescending(p => p.IsFeatured).ThenByDescending(p => p.IsBestSeller).ThenBy(p => p.Name)
@@ -561,7 +573,9 @@ public class CatalogService : ICatalogService
         }
 
         // Combo / gift-box composition (also flips ProductType to Bundle when non-empty).
-        await ApplyComboItemsAsync(product, request.ComboItems, cancellationToken);
+        // CREATE has no "leave it as it is" state — there is nothing to preserve yet — so an
+        // absent list is normalised to empty and simply means "this is a plain product".
+        await ApplyComboItemsAsync(product, request.ComboItems ?? new List<CreateComboItemRequest>(), cancellationToken);
 
         _context.Products.Add(product);
 
@@ -611,7 +625,12 @@ public class CatalogService : ICatalogService
         product.Slug = updatedProductSlug;
         product.Description = request.Description;
         product.ShortDescription = request.ShortDescription;
-        product.ProductType = request.ProductType;
+        // A request that does not send the combo list cannot be trusted to know that this product
+        // is a combo either, so a product that keeps its composition also keeps its Bundle type —
+        // the same invariant ApplyComboItemsAsync enforces whenever a non-empty list is applied.
+        product.ProductType = request.ComboItems is null && product.ComboItems.Count > 0
+            ? ProductType.Bundle
+            : request.ProductType;
         product.CategoryId = request.CategoryId;
         product.BrandId = request.BrandId;
         product.Price = Money.FromDecimal(request.Price);
@@ -672,8 +691,9 @@ public class CatalogService : ICatalogService
             sortOrder++;
         }
 
-        // The combo list is authoritative in the same way the image list is: an empty list means
-        // "this is not a combo" and clears the composition (returning ProductType to Simple).
+        // Unlike the image list, the combo list is only authoritative when it is actually sent:
+        // null (field omitted) leaves the stored composition alone, [] clears it and drops the
+        // product back to Simple, non-empty replaces it. See UpdateProductRequest.ComboItems.
         await ApplyComboItemsAsync(product, request.ComboItems, cancellationToken);
 
         await using var transaction = await _context.BeginTransactionAsync(cancellationToken);
@@ -936,10 +956,11 @@ public class CatalogService : ICatalogService
     }
 
     /// <summary>
-    /// Replaces the product's combo / gift-box composition with exactly what the request carries.
-    /// An empty (or absent) list clears the composition and drops the product back to Simple; a
-    /// non-empty one marks it as a Bundle. Rows that survive the edit are updated in place so the
-    /// unique (ComboProductId, ComponentProductId) index is never transiently violated.
+    /// Applies the product's combo / gift-box composition. The requested list is three-state:
+    /// <c>null</c> leaves the stored composition completely untouched, an empty list clears it and
+    /// drops the product back to Simple, and a non-empty one replaces it and marks the product as a
+    /// Bundle. Rows that survive the edit are updated in place so the unique
+    /// (ComboProductId, ComponentProductId) index is never transiently violated.
     ///
     /// The selling price is NEVER touched here: Price and CompareAtPrice stay exactly as the owner
     /// typed them. Only ProductDetailDto.ComboItemsTotal exposes what the parts are worth.
@@ -949,7 +970,17 @@ public class CatalogService : ICatalogService
         List<CreateComboItemRequest>? requestedItems,
         CancellationToken cancellationToken)
     {
-        var requested = requestedItems ?? new List<CreateComboItemRequest>();
+        // Three-state contract (see UpdateProductRequest.ComboItems):
+        //   null       -> the caller did not send the field: leave the composition EXACTLY as it is.
+        //   empty list -> the caller cleared it: drop every item, back to a simple product.
+        //   non-empty  -> replace the composition with these lines.
+        // The null case must return before touching anything, otherwise an ordinary product edit
+        // that simply omits "comboItems" would wipe a real combo. Only UPDATE can reach it; the
+        // create path normalises its (never-null) list before calling in.
+        if (requestedItems is null)
+            return;
+
+        var requested = requestedItems;
 
         foreach (var item in requested)
         {

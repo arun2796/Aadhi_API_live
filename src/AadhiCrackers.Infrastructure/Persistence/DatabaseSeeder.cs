@@ -184,6 +184,47 @@ public static class DatabaseSeeder
                 logger.LogInformation("Zeroed out delivery charges on existing orders.");
             }
 
+            // ── Repair: strip fabricated LR / waybill numbers ────────────────────────────
+            // Orders used to be stamped with TrackingNumber = "TRK-########" at CREATION time,
+            // invented by the server. The storefront prints it as "LR / Waybill — show this at the
+            // transport office", and it pre-fills the admin's Quick Dispatch field, so a made-up
+            // number could be dispatched with. Creation no longer mints one; this clears the rows
+            // that already carry one. Deliberately conservative and idempotent:
+            //   * only the fabricated "TRK-" pattern is touched — a real LR an admin typed in
+            //     never matches it;
+            //   * only orders that were never dispatched (no carrier recorded, and not
+            //     Shipped/OutForDelivery/Delivered/Returned) — a shipped order's real number
+            //     is never mutated;
+            //   * every row cleared is logged individually with its old value.
+            var fabricatedLrOrders = await context.Orders
+                .IgnoreQueryFilters()
+                .Where(o => o.TrackingNumber != null
+                            && o.TrackingNumber.StartsWith("TRK-")
+                            && (o.CarrierName == null || o.CarrierName == "")
+                            && o.OrderStatus != OrderStatus.Shipped
+                            && o.OrderStatus != OrderStatus.OutForDelivery
+                            && o.OrderStatus != OrderStatus.Delivered
+                            && o.OrderStatus != OrderStatus.Returned)
+                .ToListAsync();
+
+            if (fabricatedLrOrders.Count > 0)
+            {
+                foreach (var o in fabricatedLrOrders)
+                {
+                    logger.LogWarning(
+                        "Clearing fabricated LR/waybill '{TrackingNumber}' from order {OrderNumber} (status {Status}, no carrier — never dispatched).",
+                        o.TrackingNumber, o.OrderNumber, o.OrderStatus);
+                    o.TrackingNumber = null;
+                    o.UpdatedAtUtc = DateTime.UtcNow;
+                    o.UpdatedBy = "system:fabricated-lr-cleanup";
+                }
+
+                await context.SaveChangesAsync();
+                logger.LogWarning(
+                    "Removed {Count} fabricated TRK- LR/waybill number(s) from orders that were never dispatched.",
+                    fabricatedLrOrders.Count);
+            }
+
             // ───────────────────────── DEMO DATA (gated) ─────────────────────────
             if (includeDemoData)
             {
@@ -772,6 +813,11 @@ public static class DatabaseSeeder
 
                     foreach (var s in sampleOrders)
                     {
+                        // Only a dispatched consignment has an LR/waybill and a carrier. Demo rows
+                        // that are still Pending/Confirmed/Processing must carry neither, exactly
+                        // like a real order before the dispatch desk touches it.
+                        var isDispatched = s.Status is OrderStatus.Shipped or OrderStatus.OutForDelivery or OrderStatus.Delivered;
+
                         var order = new Order
                         {
                             OrderNumber = s.OrderNum,
@@ -785,7 +831,8 @@ public static class DatabaseSeeder
                             Discount = Money.Zero(),
                             GrandTotal = Money.FromDecimal(s.Amount),
                             PlacedAtUtc = s.Date,
-                            TrackingNumber = $"TRK-{Random.Shared.Next(10000000, 99999999)}",
+                            CarrierName = isDispatched ? "Sri Lakshmi Transports" : null,
+                            TrackingNumber = isDispatched ? $"LR-{Random.Shared.Next(10000000, 99999999)}" : null,
                             ShippingAddress = new Address(
                                 s.CustomerName,
                                 "9876543210",

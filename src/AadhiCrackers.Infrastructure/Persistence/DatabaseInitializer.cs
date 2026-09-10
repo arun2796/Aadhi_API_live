@@ -399,6 +399,15 @@ public static class DatabaseInitializer
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
                     }
+                    else if (migrationId.Contains("AddOrderItemCompareAtPriceSnapshot") && await ColumnExistsAsync(connection, "OrderItems", "CompareAtPriceSnapshot", cancellationToken))
+                    {
+                        // A database created by EnsureCreated from the current model already has this
+                        // column, and — unlike Orders, which DropRemainingObsoleteTables rebuilds —
+                        // OrderItems is never rebuilt by a later migration, so the AddColumn in this
+                        // migration would fail with "duplicate column name". Stamp it.
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
                 }
 
                 logger.LogWarning(

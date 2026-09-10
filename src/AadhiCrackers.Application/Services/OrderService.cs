@@ -36,6 +36,7 @@ public class OrderService : IOrderService
     private readonly IOutboxService _outbox;
     private readonly IBusinessNumberGenerator _numberGenerator;
     private readonly IFileStorageService? _fileStorage;
+    private readonly IOrderPricingService _pricing;
 
     public OrderService(
         IApplicationDbContext context,
@@ -43,7 +44,8 @@ public class OrderService : IOrderService
         IAuditLogService auditLog,
         IOutboxService outbox,
         IBusinessNumberGenerator numberGenerator,
-        IFileStorageService? fileStorage = null)
+        IFileStorageService? fileStorage = null,
+        IOrderPricingService? pricing = null)
     {
         _context = context;
         _currentUser = currentUser;
@@ -51,6 +53,7 @@ public class OrderService : IOrderService
         _outbox = outbox;
         _numberGenerator = numberGenerator;
         _fileStorage = fileStorage;
+        _pricing = pricing ?? new OrderPricingService(context);
     }
 
     private Task<string?> ProcessScreenshotBase64Async(string? base64Data, CancellationToken cancellationToken)
@@ -94,7 +97,9 @@ public class OrderService : IOrderService
             throw new DomainException("Cannot create an order with zero items.");
 
         // Find or create customer
-        var customerEmail = _currentUser.Email ?? "guest@aadhicrackers.com";
+        // Same helper the cart quote uses, so the quote and the order count a coupon's
+        // per-customer limit against the same customer record.
+        var customerEmail = OrderPricingService.ResolveOrderCustomerEmail(_currentUser.Email);
         var customer = await _context.Customers
             .Include(c => c.Addresses)
             .FirstOrDefaultAsync(c => c.Email.ToLower() == customerEmail.ToLower() && !c.IsDeleted, cancellationToken);
@@ -149,12 +154,15 @@ public class OrderService : IOrderService
             PaymentScreenshotUrl = screenshotUrl,
             PaymentSubmittedAtUtc = !string.IsNullOrWhiteSpace(request.UtrNumber) || !string.IsNullOrWhiteSpace(screenshotUrl) ? DateTime.UtcNow : null,
             ShippingAddress = request.ShippingAddress,
-            BillingAddress = request.BillingAddress ?? (request.ShippingAddress with { }),
-            TrackingNumber = $"TRK-{Random.Shared.Next(10000000, 99999999)}"
+            BillingAddress = request.BillingAddress ?? (request.ShippingAddress with { })
+            // NO TrackingNumber here. A tracking/LR number is a real document issued by the
+            // transport company; it exists only once the parcel has physically been handed over.
+            // It is set exactly once, by DispatchOrderAsync, from what the admin types in.
         };
 
+        // Lines feed the shared calculator so the order bills exactly what /cart/calculate quoted.
+        var pricedLines = new List<PricedLine>();
         var itemsSubtotal = Money.Zero();
-        var totalTax = Money.Zero();
 
         foreach (var reqItem in request.Items)
         {
@@ -169,12 +177,23 @@ public class OrderService : IOrderService
             // Reserve stock directly on Product (single source of truth)
             product.ReservedQuantity += reqItem.Quantity;
 
-            var unitPrice = product.Price;
-            var lineTotalBeforeTax = unitPrice * reqItem.Quantity;
-            var itemTax = lineTotalBeforeTax * (product.TaxRate / 100m);
+            var line = new PricedLine(product.Price, reqItem.Quantity, product.TaxRate);
+            pricedLines.Add(line);
+
+            var unitPrice = line.UnitPrice;
+            var lineTotalBeforeTax = line.LineTotalBeforeTax;
+            var itemTax = line.Tax;
 
             var primaryImg = product.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary)?.Url
                 ?? product.Images.OrderBy(i => i.SortOrder).FirstOrDefault()?.Url;
+
+            // MRP snapshot for the printed estimate's "Rate/Qty (MRP)" and "Discount %" columns.
+            // Frozen here so a later catalogue re-price can never rewrite a historical document, and
+            // stored ONLY when the list price genuinely exceeds what was charged — a compare-at price
+            // that is absent, equal to, or below the unit price is not a discount and stays null.
+            var compareAtSnapshot = product.CompareAtPrice is { } mrp && mrp > unitPrice
+                ? mrp
+                : (Money?)null;
 
             var orderItem = new OrderItem
             {
@@ -185,6 +204,7 @@ public class OrderService : IOrderService
                 ProductImageUrlSnapshot = primaryImg,
                 UnitPrice = unitPrice,
                 CostPriceSnapshot = product.CostPrice,
+                CompareAtPriceSnapshot = compareAtSnapshot,
                 Quantity = reqItem.Quantity,
                 Discount = Money.Zero(),
                 Tax = itemTax,
@@ -193,56 +213,39 @@ public class OrderService : IOrderService
 
             order.Items.Add(orderItem);
             itemsSubtotal += lineTotalBeforeTax;
-            totalTax += itemTax;
         }
 
-        order.ItemsSubtotal = itemsSubtotal;
-        order.Tax = totalTax;
-
-        // Apply Promotion/Coupon if specified
-        var discount = Money.Zero();
-        if (!string.IsNullOrWhiteSpace(request.CouponCode))
+        // Apply Promotion/Coupon if specified — resolved by the same gate POST /cart/calculate uses.
+        var (promo, discount) = await _pricing.ResolveCouponAsync(request.CouponCode, itemsSubtotal, customer.Id, cancellationToken);
+        if (promo != null)
         {
-            var promo = await _context.Promotions.FirstOrDefaultAsync(p => p.Code.ToUpper() == request.CouponCode.Trim().ToUpper() && !p.IsDeleted, cancellationToken);
-            if (promo != null)
+            promo.UsedCount++;
+            promo.RowVersion = Guid.NewGuid();
+            order.CouponCode = promo.Code;
+
+            _context.PromotionRedemptions.Add(new PromotionRedemption
             {
-                var customerUsageCount = await _context.PromotionRedemptions
-                    .CountAsync(r => r.PromotionId == promo.Id && r.CustomerId == customer.Id && !r.IsDeleted, cancellationToken);
-
-                if (promo.IsValidForOrder(itemsSubtotal, customerUsageCount))
-                {
-                    discount = promo.CalculateDiscount(itemsSubtotal);
-                    promo.UsedCount++;
-                    promo.RowVersion = Guid.NewGuid();
-                    order.CouponCode = promo.Code;
-
-                    _context.PromotionRedemptions.Add(new PromotionRedemption
-                    {
-                        PromotionId = promo.Id,
-                        CustomerId = customer.Id,
-                        OrderId = order.Id,
-                        RedeemedAtUtc = DateTime.UtcNow
-                    });
-                }
-            }
+                PromotionId = promo.Id,
+                CustomerId = customer.Id,
+                OrderId = order.Id,
+                RedeemedAtUtc = DateTime.UtcNow
+            });
         }
-        order.Discount = discount;
 
-        // Delivery is NEVER charged: goods travel by lorry and the customer pays the transport
-        // company directly when collecting the parcel. There is no free-shipping threshold and
-        // no delivery-charge setting is consulted — ShippingCharge is always zero on new orders
-        // (the column survives only so historical orders keep their recorded value).
-        var shippingCharge = Money.Zero();
-        order.ShippingCharge = shippingCharge;
+        // Every money component below comes from the shared calculator, the same one that answers
+        // POST /cart/calculate. Delivery is NEVER charged (freight is settled with the transport
+        // company on collection); packing charges are a real billed line at the rate held in the
+        // SystemSettings key Order.PackingChargePercent (default 1.5%).
+        var packingChargePercent = await _pricing.GetPackingChargePercentAsync(cancellationToken);
+        var totals = _pricing.CalculateTotals(pricedLines, discount, packingChargePercent);
 
-        // Packing charges: a real billed line, percentage of the items subtotal
-        // (rate from the SystemSettings key Order.PackingChargePercent, default 1.5%).
-        var packingChargePercent = await GetPackingChargePercentAsync(cancellationToken);
-        var packingCharges = CalculatePackingCharges(itemsSubtotal, packingChargePercent);
-        order.PackingCharges = packingCharges;
-        order.PackingChargePercent = packingChargePercent;
-
-        order.GrandTotal = itemsSubtotal - discount + totalTax + shippingCharge + packingCharges;
+        order.ItemsSubtotal = totals.ItemsSubtotal;
+        order.Tax = totals.Tax;
+        order.Discount = totals.Discount;
+        order.ShippingCharge = totals.ShippingCharge;
+        order.PackingCharges = totals.PackingCharges;
+        order.PackingChargePercent = totals.PackingChargePercent;
+        order.GrandTotal = totals.GrandTotal;
 
         // Initial Order History
         order.StatusHistories.Add(new OrderStatusHistory
@@ -687,6 +690,7 @@ public class OrderService : IOrderService
                 SKU = i.SKUSnapshot,
                 ImageUrl = i.ProductImageUrlSnapshot,
                 UnitPrice = i.UnitPrice.ToDecimal(),
+                CompareAtPrice = i.CompareAtPriceSnapshot?.ToDecimal(),
                 Quantity = i.Quantity,
                 Discount = i.Discount.ToDecimal(),
                 Tax = i.Tax.ToDecimal(),
@@ -1058,27 +1062,8 @@ public class OrderService : IOrderService
         };
     }
 
-    private const string PackingChargePercentSettingKey = "Order.PackingChargePercent";
-    private const decimal DefaultPackingChargePercent = 1.5m;
-
-    /// <summary>Packing charge rate (a percentage, e.g. 1.5 for 1.5%) from system settings.</summary>
-    private async Task<decimal> GetPackingChargePercentAsync(CancellationToken cancellationToken)
-    {
-        var raw = await _context.SystemSettings
-            .AsNoTracking()
-            .Where(s => s.Key == PackingChargePercentSettingKey && !s.IsDeleted)
-            .Select(s => s.Value)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return !string.IsNullOrWhiteSpace(raw)
-            && decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var percent)
-            && percent >= 0m
-                ? percent
-                : DefaultPackingChargePercent;
-    }
-
-    private static Money CalculatePackingCharges(Money itemsSubtotal, decimal percent) =>
-        Money.FromDecimal(Math.Round(itemsSubtotal.ToDecimal() * percent / 100m, 2, MidpointRounding.AwayFromZero));
+    // Packing-charge rate and arithmetic live in OrderPricingService — the single calculator
+    // shared with POST /cart/calculate. Do not reintroduce a local copy here.
 
     private async Task<Customer?> ResolveCurrentCustomerAsync(CancellationToken cancellationToken)
     {
@@ -1150,6 +1135,7 @@ public class OrderService : IOrderService
                 SKU = i.SKUSnapshot,
                 ImageUrl = i.ProductImageUrlSnapshot,
                 UnitPrice = i.UnitPrice.ToDecimal(),
+                CompareAtPrice = i.CompareAtPriceSnapshot?.ToDecimal(),
                 Quantity = i.Quantity,
                 Discount = i.Discount.ToDecimal(),
                 Tax = i.Tax.ToDecimal(),

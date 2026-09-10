@@ -1,4 +1,4 @@
-using AadhiCrackers.Domain.Common;
+﻿using AadhiCrackers.Domain.Common;
 using AadhiCrackers.Domain.Enums;
 using AadhiCrackers.Domain.Exceptions;
 using AadhiCrackers.Domain.ValueObjects;
@@ -29,6 +29,16 @@ public class OrderItem : BaseEntity<Guid>
     public string? ProductImageUrlSnapshot { get; set; }
     public Money UnitPrice { get; set; } = Money.Zero();
     public Money CostPriceSnapshot { get; set; } = Money.Zero();
+
+    /// <summary>
+    /// The product's list price / MRP (Product.CompareAtPrice) as it stood the moment the order was
+    /// placed, so a printed estimate can show a TRUE "Rate/Qty (MRP)" and a TRUE discount % that never
+    /// shift when the catalogue is re-priced later. Nullable on purpose: it is left null both for
+    /// products that carry no compare-at price and for products whose compare-at price is not actually
+    /// above the unit price charged (a struck-through price at or below what was billed is meaningless),
+    /// and every row that predates this column is null.
+    /// </summary>
+    public Money? CompareAtPriceSnapshot { get; set; }
     public int Quantity { get; set; }
     public Money Discount { get; set; } = Money.Zero();
     public Money Tax { get; set; } = Money.Zero();

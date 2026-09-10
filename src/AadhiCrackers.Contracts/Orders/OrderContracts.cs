@@ -16,15 +16,33 @@ public class CartItemDto
     public decimal LineTotal => UnitPrice * Quantity;
 }
 
+
 public class CartDto
 {
     public List<CartItemDto> Items { get; set; } = new();
     public int TotalItems => Items.Sum(i => i.Quantity);
+
     public decimal Subtotal => Items.Sum(i => i.LineTotal);
+
+    public decimal ItemsSubtotal { get; set; }
+
     public decimal Discount { get; set; }
     public string? CouponCode { get; set; }
-    public decimal ShippingCharge { get; set; } = 0m; // Sivakasi cracker orders are strictly To-Pay freight
-    public decimal GrandTotal => Math.Max(0, Subtotal - Discount);
+
+    /// <summary>GST on the lines, at each product's own tax rate (matches OrderDto.Tax).</summary>
+    public decimal Tax { get; set; }
+
+    /// <summary>Packing/handling charge actually billed (matches OrderDto.PackingCharges).</summary>
+    public decimal PackingCharges { get; set; }
+
+    /// <summary>The rate the packing charge was computed at, e.g. 1.5 for 1.5%.</summary>
+    public decimal PackingChargePercent { get; set; }
+
+    /// <summary>Always 0 — Sivakasi cracker orders are strictly To-Pay freight.</summary>
+    public decimal ShippingCharge { get; set; } = 0m;
+
+    /// <summary>ItemsSubtotal - Discount + Tax + ShippingCharge + PackingCharges.</summary>
+    public decimal GrandTotal { get; set; }
 }
 
 public class AddToCartRequest
@@ -67,6 +85,16 @@ public class OrderItemDto
     public string SKU { get; set; } = string.Empty;
     public string? ImageUrl { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>
+    /// The product's list price / MRP frozen onto the line when the order was placed
+    /// (OrderItem.CompareAtPriceSnapshot). Null when the product had no compare-at price, when it
+    /// was not above the unit price actually charged, or for any order placed before the snapshot
+    /// existed. Printed estimates should show the MRP and discount % columns only when it is set:
+    /// discount % = round((1 - UnitPrice / CompareAtPrice) * 100).
+    /// </summary>
+    public decimal? CompareAtPrice { get; set; }
+
     public int Quantity { get; set; }
     public decimal Discount { get; set; }
     public decimal Tax { get; set; }

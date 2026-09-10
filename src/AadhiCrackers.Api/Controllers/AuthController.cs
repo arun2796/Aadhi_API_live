@@ -14,13 +14,13 @@ public class AuthController : ControllerBase
 {
     private readonly IIdentityService _identityService;
     private readonly ICurrentUserService _currentUser;
-    private readonly IWebHostEnvironment _environment;
 
-    public AuthController(IIdentityService identityService, ICurrentUserService currentUser, IWebHostEnvironment environment)
+    // Deliberately no IWebHostEnvironment: nothing in this controller may behave differently
+    // (least of all more permissively) because the box happens to be running as Development.
+    public AuthController(IIdentityService identityService, ICurrentUserService currentUser)
     {
         _identityService = identityService;
         _currentUser = currentUser;
-        _environment = environment;
     }
 
     [HttpPost("login")]
@@ -97,13 +97,17 @@ public class AuthController : ControllerBase
     private async Task<ActionResult<ApiResponse<ForgotPasswordResponse>>> SendPasswordResetOtpAsync(ForgotPasswordRequest request, CancellationToken cancellationToken)
     {
         var identifier = !string.IsNullOrWhiteSpace(request.Identifier) ? request.Identifier : request.Email;
-        var otp = await _identityService.GeneratePasswordResetOtpAsync(identifier, cancellationToken);
+
+        // The OTP is a credential. It is delivered out of band (SMS/email, and in DEBUG builds the
+        // application log) and is NEVER echoed in the HTTP response — not in Development either.
+        // The previous IsDevelopment()-gated "devOtp" field made a full account takeover possible
+        // with nothing but a phone number, one environment variable away from being live.
+        _ = await _identityService.GeneratePasswordResetOtpAsync(identifier, cancellationToken);
 
         // Always 200 — never reveal whether an account exists.
         var response = new ForgotPasswordResponse
         {
-            Message = "If an account exists for this mobile number or email, an OTP has been sent.",
-            DevOtp = _environment.IsDevelopment() ? otp : null
+            Message = "If an account exists for this mobile number or email, an OTP has been sent."
         };
 
         return Ok(ApiResponse<ForgotPasswordResponse>.Ok(response, response.Message, _currentUser.CorrelationId));

@@ -49,10 +49,10 @@ public class ForgotPasswordRequest
     public string Email { get; set; } = string.Empty; // legacy fallback
 }
 
+
 public class ForgotPasswordResponse
 {
     public string Message { get; set; } = string.Empty;
-    public string? DevOtp { get; set; } // populated ONLY in Development environment
 }
 
 public class VerifyOtpRequest

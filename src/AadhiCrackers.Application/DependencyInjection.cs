@@ -12,6 +12,8 @@ public static class DependencyInjection
 
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<ICatalogService, CatalogService>();
+        // The single order-money calculator shared by POST /cart/calculate and POST /orders.
+        services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IFinanceService, FinanceService>();
         services.AddScoped<IReportService, ReportService>();
