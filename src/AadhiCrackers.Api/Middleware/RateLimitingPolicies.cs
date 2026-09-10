@@ -20,6 +20,7 @@ public static class RateLimitingPolicies
     public const string AdminApi = "ADMIN_API";
     public const string Reports = "REPORTS";
     public const string AuditSearch = "AUDIT_SEARCH";
+    public const string Notifications = "NOTIFICATIONS";
 
     public static IServiceCollection AddAppRateLimiting(this IServiceCollection services)
     {
@@ -182,6 +183,18 @@ public static class RateLimitingPolicies
 
             // 10. AUDIT SEARCH: 60 req / min
             options.AddPolicy(AuditSearch, httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: httpContext.User?.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anon",
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 60,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
+            // 11. NOTIFICATIONS: 60 req / min - the customer's inbox is polled, so it gets its own
+            // per-user bucket rather than sharing the checkout or admin allowance.
+            options.AddPolicy(Notifications, httpContext =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: httpContext.User?.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anon",
                     factory: _ => new FixedWindowRateLimiterOptions

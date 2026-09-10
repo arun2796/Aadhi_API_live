@@ -408,6 +408,14 @@ public static class DatabaseInitializer
                         var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
                         await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
                     }
+                    else if (migrationId.Contains("AddNotifications") && await TableExistsAsync(connection, "Notifications", cancellationToken))
+                    {
+                        // A database created by EnsureCreated from the current model already has the
+                        // customer notification inbox, so the CreateTable in this migration would
+                        // fail with "table Notifications already exists". Stamp it.
+                        var insertHistoryScript = historyRepository.GetInsertScript(new HistoryRow(migrationId, "9.0.2"));
+                        await context.Database.ExecuteSqlRawAsync(insertHistoryScript, cancellationToken);
+                    }
                 }
 
                 logger.LogWarning(

@@ -33,6 +33,7 @@ public interface IApplicationDbContext
     DbSet<HomepageBanner> HomepageBanners { get; }
     DbSet<OtpVerification> OtpVerifications { get; }
     DbSet<WishlistItem> WishlistItems { get; }
+    DbSet<Notification> Notifications { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
@@ -79,7 +80,13 @@ public interface IFileStorageService
 public interface INotificationService
 {
     Task SendOrderConfirmationAsync(Order order, CancellationToken cancellationToken = default);
-    Task SendOrderStatusUpdatedAsync(Order order, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Raised when an order moves to a new status. <paramref name="newStatus"/> is the status the
+    /// EVENT carried; it is preferred over the order row because several status events can be
+    /// pending in the outbox at once while the row already shows only the latest one. Falls back to
+    /// the order's current status when not supplied.
+    /// </summary>
+    Task SendOrderStatusUpdatedAsync(Order order, string? newStatus = null, CancellationToken cancellationToken = default);
     Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default);
     Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default);
     Task SendOrderDispatchedAsync(Order order, string carrierName, string trackingNumber, string? carrierPhone, string? carrierAddress, CancellationToken cancellationToken = default);

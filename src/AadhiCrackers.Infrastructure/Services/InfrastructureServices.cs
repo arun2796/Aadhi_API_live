@@ -1,8 +1,11 @@
 using System.Text.Json;
 using AadhiCrackers.Application.Common.Interfaces;
+using AadhiCrackers.Application.Services;
 using AadhiCrackers.Contracts.Catalog;
 using AadhiCrackers.Contracts.Common;
 using AadhiCrackers.Domain.Entities;
+using AadhiCrackers.Domain.Enums;
+using AadhiCrackers.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -83,54 +86,160 @@ public class LocalFileStorageService : IFileStorageService
     }
 }
 
+/// <summary>
+/// Writes customer-facing notifications into OUR OWN Notifications table and keeps the existing
+/// structured logging. There is deliberately no SMS gateway, no WhatsApp API and no e-mail
+/// provider: the shop stores what happened, the storefront reads it back over
+/// api/v1/notifications.
+///
+/// It is driven entirely by the outbox (OutboxProcessorBackgroundService), which already resolves
+/// every order lifecycle event to a call on this interface, so no controller has to invoke
+/// anything new.
+///
+/// IDEMPOTENCY. The outbox retries and can redeliver, so every row is keyed by the LOGICAL event
+/// (Notification.DedupeKey, unique-indexed) rather than the delivery attempt: a redelivery finds
+/// the key already present and does nothing.
+///
+/// GUEST ISOLATION. Every anonymous checkout is attached to one shared customer record
+/// (guest@aadhicrackers.com). Attributing a guest notification to that record would make it visible
+/// to every other guest through "my notifications", so a notification whose order belongs to the
+/// shared bucket is stored with CustomerId = NULL and is reachable only by its order number.
+/// Resolution fails closed: if the owning customer cannot be read, no owner is recorded.
+/// </summary>
 public class NotificationService : INotificationService
 {
-    private readonly ILogger<NotificationService> _logger;
+    private const int MaxTitleLength = 150;
+    private const int MaxMessageLength = 1000;
 
-    public NotificationService(ILogger<NotificationService> logger)
+    private readonly ILogger<NotificationService> _logger;
+    private readonly AadhiDbContext _context;
+
+    public NotificationService(ILogger<NotificationService> logger, AadhiDbContext context)
     {
         _logger = logger;
+        _context = context;
     }
 
-    public Task SendOrderConfirmationAsync(Order order, CancellationToken cancellationToken = default)
+    public async Task SendOrderConfirmationAsync(Order order, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("📧 [Notification Service] Order confirmation dispatched for Order #{OrderNumber}, Total: {GrandTotal}",
             order.OrderNumber, order.GrandTotal.Format());
-        return Task.CompletedTask;
+
+        var notification = await BuildForOrderAsync(order, NotificationType.OrderPlaced, $"OrderPlaced|{order.Id}", cancellationToken);
+        notification.Title = $"Order {order.OrderNumber} placed";
+        notification.Message =
+            $"We have received your order {order.OrderNumber} for {order.GrandTotal.Format()}. " +
+            "We will confirm it as soon as your payment is verified, and we will tell you here the moment it is handed to the transport company.";
+        notification.DataJson = SerializeData(new Dictionary<string, string>
+        {
+            ["grandTotal"] = order.GrandTotal.Format(),
+            ["grandTotalAmount"] = order.GrandTotal.ToDecimal().ToString(System.Globalization.CultureInfo.InvariantCulture)
+        });
+
+        await PersistAsync(notification, cancellationToken);
     }
 
-    public Task SendOrderStatusUpdatedAsync(Order order, CancellationToken cancellationToken = default)
+    public async Task SendOrderStatusUpdatedAsync(Order order, string? newStatus = null, CancellationToken cancellationToken = default)
     {
+        // The event's own NewStatus is preferred over the order row: several status events can be
+        // waiting in the outbox at once and the row already shows the LATEST status, which would
+        // collapse two distinct notifications into one.
+        var status = string.IsNullOrWhiteSpace(newStatus) ? order.OrderStatus.ToString() : newStatus.Trim();
+
         _logger.LogInformation("📧 [Notification Service] Order status update notification dispatched for Order #{OrderNumber}, New Status: {Status}",
-            order.OrderNumber, order.OrderStatus);
-        return Task.CompletedTask;
+            order.OrderNumber, status);
+
+        var notification = await BuildForOrderAsync(order, NotificationType.OrderStatusChanged, $"OrderStatusChanged|{order.Id}|{status}", cancellationToken);
+        notification.OrderStatus = status;
+        notification.Title = BuildStatusTitle(order.OrderNumber, status);
+        notification.Message = BuildStatusMessage(order, status);
+
+        await PersistAsync(notification, cancellationToken);
     }
 
-    public Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default)
+    public async Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("📧 [Notification Service] Payment verified notification dispatched for Order #{OrderNumber}, Total: {GrandTotal}",
             order.OrderNumber, order.GrandTotal.Format());
-        return Task.CompletedTask;
+
+        var notification = await BuildForOrderAsync(order, NotificationType.PaymentVerified, $"PaymentVerified|{order.Id}", cancellationToken);
+        notification.Title = $"Payment verified for order {order.OrderNumber}";
+        notification.Message =
+            $"Your payment of {order.GrandTotal.Format()} for order {order.OrderNumber} has been verified. " +
+            "Your order is confirmed and is being prepared for dispatch.";
+        notification.DataJson = SerializeData(new Dictionary<string, string>
+        {
+            ["grandTotal"] = order.GrandTotal.Format(),
+            ["utrNumber"] = order.UtrNumber ?? string.Empty
+        });
+
+        await PersistAsync(notification, cancellationToken);
     }
 
-    public Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default)
+    public async Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default)
     {
         _logger.LogWarning("📧 [Notification Service] Payment rejected notification dispatched for Order #{OrderNumber}. Reason: {Reason}",
             order.OrderNumber, reason);
-        return Task.CompletedTask;
+
+        var notification = await BuildForOrderAsync(order, NotificationType.PaymentRejected, $"PaymentRejected|{order.Id}", cancellationToken);
+        notification.Title = $"Payment could not be verified for order {order.OrderNumber}";
+        notification.Message =
+            $"We could not verify the payment for order {order.OrderNumber}, so the order has been cancelled. " +
+            $"Reason: {reason}. Please contact us with the correct payment reference and we will help you place it again.";
+        notification.DataJson = SerializeData(new Dictionary<string, string>
+        {
+            ["reason"] = reason,
+            ["utrNumber"] = order.UtrNumber ?? string.Empty
+        });
+
+        await PersistAsync(notification, cancellationToken);
     }
 
-    public Task SendOrderDispatchedAsync(Order order, string carrierName, string trackingNumber, string? carrierPhone, string? carrierAddress, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// THE notification this whole feature exists for. The consignment goes by lorry to a transport
+    /// office and the customer collects it there, so the message must name the transport company,
+    /// the LR / waybill number to quote, and the office phone number and address to walk into. Those
+    /// four facts are stored as columns as well as inside the rendered message, so the app can make
+    /// the phone tappable and the LR copyable without parsing the sentence.
+    /// </summary>
+    public async Task SendOrderDispatchedAsync(Order order, string carrierName, string trackingNumber, string? carrierPhone, string? carrierAddress, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
             "📦 [Notification Service] Dispatch notification dispatched for Order #{OrderNumber}: carrier {CarrierName}, LR/waybill {TrackingNumber}, transport office phone {CarrierPhone}, address {CarrierAddress}",
             order.OrderNumber, carrierName, trackingNumber, carrierPhone ?? "(not recorded)", carrierAddress ?? "(not recorded)");
-        return Task.CompletedTask;
-    }
 
+        var notification = await BuildForOrderAsync(order, NotificationType.OrderDispatched, $"OrderDispatched|{order.Id}|{trackingNumber}", cancellationToken);
+        notification.OrderStatus = OrderStatus.Shipped.ToString();
+        notification.CarrierName = carrierName;
+        notification.TrackingNumber = trackingNumber;
+        notification.CarrierPhone = string.IsNullOrWhiteSpace(carrierPhone) ? null : carrierPhone.Trim();
+        notification.CarrierAddress = string.IsNullOrWhiteSpace(carrierAddress) ? null : carrierAddress.Trim();
+
+        notification.Title = $"Order {order.OrderNumber} dispatched via {carrierName}";
+
+        var message = new System.Text.StringBuilder();
+        message.Append($"Your order {order.OrderNumber} has been dispatched through {carrierName}. ");
+        message.Append($"LR / waybill number: {trackingNumber}. ");
+        message.Append("Collect your parcel from the transport office");
+        if (notification.CarrierAddress != null)
+        {
+            message.Append($" at {notification.CarrierAddress}");
+        }
+        message.Append('.');
+        if (notification.CarrierPhone != null)
+        {
+            message.Append($" Transport office phone: {notification.CarrierPhone}.");
+        }
+        message.Append($" Please quote LR / waybill {trackingNumber} and carry a photo ID when you collect it.");
+        notification.Message = message.ToString();
+
+        await PersistAsync(notification, cancellationToken);
+    }
 
     public Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default)
     {
+        // Operational, not customer-facing: the Notifications table is the customer's inbox, so a
+        // low-stock alert deliberately stays a log line and is not stored there.
         _logger.LogWarning("⚠️ [Notification Service] Low stock alert: Product '{Name}' (SKU: {SKU}) is at {Stock} units (Reorder Level: {ReorderLevel})",
             product.Name, product.SKU, currentStock, product.ReorderLevel);
         return Task.CompletedTask;
@@ -140,7 +249,9 @@ public class NotificationService : INotificationService
     {
         // Logging stub — replace with SMS/email gateway integration in production.
         //
-        // The OTP is a credential and is NEVER returned in an HTTP response. Developers who need it
+        // The OTP is a credential and is NEVER returned in an HTTP response, and never written to
+        // the Notifications table either: those rows are served back over HTTP, so storing an OTP
+        // there would hand the code to anyone who can read the inbox. Developers who need it
         // locally read it from this log line, which is compiled in ONLY for DEBUG builds: a Release
         // build physically does not contain the code that prints it, so no environment variable,
         // appsettings value or log-level change can turn the leak on in a deployed instance.
@@ -153,6 +264,158 @@ public class NotificationService : INotificationService
 #endif
         return Task.CompletedTask;
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Persistence plumbing
+    // ---------------------------------------------------------------------------------------
+
+    private async Task<Notification> BuildForOrderAsync(Order order, NotificationType type, string dedupeKey, CancellationToken cancellationToken)
+    {
+        return new Notification
+        {
+            CustomerId = await ResolveOwnerCustomerIdAsync(order, cancellationToken),
+            OrderId = order.Id,
+            OrderNumber = order.OrderNumber,
+            Type = type,
+            OrderStatus = order.OrderStatus.ToString(),
+            DedupeKey = dedupeKey,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// The customer this notification may be served to under "my notifications", or NULL when there
+    /// is no such single owner. Guest checkouts all share one customer record, so that record is
+    /// never treated as an owner; the row is then reachable only through its order number, which is
+    /// exactly the handle a guest has. Fails closed: an unreadable customer yields NULL.
+    /// </summary>
+    private async Task<Guid?> ResolveOwnerCustomerIdAsync(Order order, CancellationToken cancellationToken)
+    {
+        var email = order.Customer?.Email;
+
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            email = await _context.Customers
+                .AsNoTracking()
+                .Where(c => c.Id == order.CustomerId)
+                .Select(c => c.Email)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(email) || OrderPricingService.IsSharedGuestBucket(email))
+        {
+            return null;
+        }
+
+        return order.CustomerId;
+    }
+
+    private async Task PersistAsync(Notification notification, CancellationToken cancellationToken)
+    {
+        notification.Title = Truncate(notification.Title, MaxTitleLength);
+        notification.Message = Truncate(notification.Message, MaxMessageLength);
+
+        var alreadyStored = await _context.Notifications
+            .AsNoTracking()
+            .AnyAsync(n => n.DedupeKey == notification.DedupeKey, cancellationToken);
+
+        if (alreadyStored)
+        {
+            _logger.LogDebug("Notification {DedupeKey} already stored; redelivery ignored.", notification.DedupeKey);
+            return;
+        }
+
+        _context.Notifications.Add(notification);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Stored {Type} notification {Id} for order {OrderNumber} (customer {CustomerId}).",
+                notification.Type, notification.Id, notification.OrderNumber, notification.CustomerId?.ToString() ?? "guest / none");
+        }
+        catch (DbUpdateException ex)
+        {
+            // Lost a race against a concurrent delivery of the same logical event: the unique index
+            // on DedupeKey did its job. Drop the duplicate so the caller's own SaveChanges (the
+            // outbox marking the message processed) is not poisoned by a doomed pending insert.
+            _context.Entry(notification).State = EntityState.Detached;
+
+            if (await _context.Notifications.AsNoTracking().AnyAsync(n => n.DedupeKey == notification.DedupeKey, cancellationToken))
+            {
+                _logger.LogWarning(ex, "Notification {DedupeKey} was stored concurrently; duplicate discarded.", notification.DedupeKey);
+                return;
+            }
+
+            throw;
+        }
+    }
+
+    private static string BuildStatusTitle(string orderNumber, string status) => status switch
+    {
+        nameof(OrderStatus.Confirmed) => $"Order {orderNumber} confirmed",
+        nameof(OrderStatus.Processing) => $"Order {orderNumber} is being prepared",
+        nameof(OrderStatus.Packed) => $"Order {orderNumber} is packed",
+        nameof(OrderStatus.Shipped) => $"Order {orderNumber} has been shipped",
+        nameof(OrderStatus.OutForDelivery) => $"Order {orderNumber} is out for delivery",
+        nameof(OrderStatus.Delivered) => $"Order {orderNumber} delivered",
+        nameof(OrderStatus.Cancelled) => $"Order {orderNumber} cancelled",
+        nameof(OrderStatus.Returned) => $"Order {orderNumber} returned",
+        _ => $"Order {orderNumber} updated"
+    };
+
+    private static string BuildStatusMessage(Order order, string status)
+    {
+        var orderNumber = order.OrderNumber;
+
+        if (status == nameof(OrderStatus.Shipped))
+        {
+            // An admin can move an order to Shipped without going through the dispatch desk; if the
+            // carrier details are on the order anyway, repeat them here - they are what the customer
+            // actually needs in order to collect the parcel.
+            var shipped = $"Your order {orderNumber} has been handed to the transport company.";
+            if (!string.IsNullOrWhiteSpace(order.CarrierName))
+            {
+                shipped += $" Transport company: {order.CarrierName}.";
+            }
+            if (!string.IsNullOrWhiteSpace(order.TrackingNumber))
+            {
+                shipped += $" LR / waybill number: {order.TrackingNumber}.";
+            }
+            if (!string.IsNullOrWhiteSpace(order.CarrierPhone))
+            {
+                shipped += $" Transport office phone: {order.CarrierPhone}.";
+            }
+            if (!string.IsNullOrWhiteSpace(order.CarrierAddress))
+            {
+                shipped += $" Collect it from {order.CarrierAddress}.";
+            }
+            return shipped;
+        }
+
+        return status switch
+        {
+            nameof(OrderStatus.Confirmed) => $"Your order {orderNumber} is confirmed. We are getting it ready for packing.",
+            nameof(OrderStatus.Processing) => $"Your order {orderNumber} is being prepared.",
+            nameof(OrderStatus.Packed) => $"Your order {orderNumber} has been packed in fire-safe cartons and is waiting to be handed to the transport company.",
+            nameof(OrderStatus.OutForDelivery) => $"Your order {orderNumber} is out for delivery.",
+            nameof(OrderStatus.Delivered) => $"Your order {orderNumber} has been delivered. Thank you for shopping with Aadhi Crackers.",
+            nameof(OrderStatus.Cancelled) => $"Your order {orderNumber} has been cancelled.",
+            nameof(OrderStatus.Returned) => $"Your order {orderNumber} has been marked as returned.",
+            _ => $"The status of your order {orderNumber} is now {status}."
+        };
+    }
+
+    private static string? SerializeData(Dictionary<string, string> data)
+    {
+        var cleaned = data
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        return cleaned.Count == 0 ? null : JsonSerializer.Serialize(cleaned);
+    }
+
+    private static string Truncate(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..(maxLength - 1)] + "…";
 }
 
 public class SearchService : ISearchService

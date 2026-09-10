@@ -184,3 +184,11 @@ public enum PromotionStatus
     Disabled = 5
 }
 
+public enum NotificationType
+{
+    OrderPlaced = 1,
+    PaymentVerified = 2,
+    PaymentRejected = 3,
+    OrderStatusChanged = 4,
+    OrderDispatched = 5
+}

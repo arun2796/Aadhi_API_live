@@ -36,6 +36,7 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
     public DbSet<OtpVerification> OtpVerifications => Set<OtpVerification>();
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     public Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
@@ -444,6 +445,51 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasQueryFilter(bn => !bn.IsDeleted);
         });
 
+        // Notification Configuration - customer-facing order messages served from our own table.
+        builder.Entity<Notification>(b =>
+        {
+            b.HasKey(n => n.Id);
+
+            // The two read paths, indexed for exactly what they filter and sort on:
+            //   GET /notifications            -> WHERE CustomerId = @id ORDER BY CreatedAtUtc DESC
+            //   GET /notifications/order/{no} -> WHERE OrderNumber = @no ORDER BY CreatedAtUtc DESC
+            b.HasIndex(n => new { n.CustomerId, n.CreatedAtUtc });
+            b.HasIndex(n => new { n.OrderNumber, n.CreatedAtUtc });
+            // Unread-count badge: WHERE CustomerId = @id AND IsRead = 0
+            b.HasIndex(n => new { n.CustomerId, n.IsRead });
+            b.HasIndex(n => n.OrderId);
+
+            // Idempotency: the outbox may redeliver, so a logical event may only ever produce one row.
+            b.HasIndex(n => n.DedupeKey).IsUnique();
+
+            // Stored as the enum NAME so the ordinal is never load-bearing on disk.
+            b.Property(n => n.Type).HasConversion<string>().IsRequired().HasMaxLength(50);
+
+            b.Property(n => n.Title).IsRequired().HasMaxLength(150);
+            b.Property(n => n.Message).IsRequired().HasMaxLength(1000);
+            b.Property(n => n.OrderNumber).HasMaxLength(50);
+            b.Property(n => n.OrderStatus).HasMaxLength(30);
+            b.Property(n => n.CarrierName).HasMaxLength(150);
+            b.Property(n => n.TrackingNumber).HasMaxLength(100);
+            b.Property(n => n.CarrierPhone).HasMaxLength(50);
+            b.Property(n => n.CarrierAddress).HasMaxLength(500);
+            b.Property(n => n.DataJson).HasMaxLength(2000);
+            b.Property(n => n.DedupeKey).IsRequired().HasMaxLength(200);
+
+            // No navigation properties on purpose: nothing needs to Include() from here, and the
+            // denormalised OrderNumber keeps the row readable without the join.
+            b.HasOne<Customer>()
+                .WithMany()
+                .HasForeignKey(n => n.CustomerId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            b.HasOne<Order>()
+                .WithMany()
+                .HasForeignKey(n => n.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasQueryFilter(n => !n.IsDeleted);
+        });
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

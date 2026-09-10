@@ -79,6 +79,13 @@ public class OutboxProcessorBackgroundService : BackgroundService
                                     case "OrderStatusChanged":
                                         {
                                             using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            // The status the EVENT carried, not the one the order row happens to show
+                                            // now: two status events can be waiting at once, and re-reading the row
+                                            // would collapse them into a single notification.
+                                            var newStatus = doc.RootElement.TryGetProperty("NewStatus", out var statusProp) && statusProp.ValueKind == JsonValueKind.String
+                                                ? statusProp.GetString()
+                                                : null;
+
                                             if (doc.RootElement.TryGetProperty("OrderId", out var orderIdProp) &&
                                                 Guid.TryParse(orderIdProp.GetString(), out var orderId))
                                             {
@@ -88,7 +95,7 @@ public class OutboxProcessorBackgroundService : BackgroundService
 
                                                 if (order != null)
                                                 {
-                                                    await notificationService.SendOrderStatusUpdatedAsync(order, stoppingToken);
+                                                    await notificationService.SendOrderStatusUpdatedAsync(order, newStatus, stoppingToken);
                                                 }
                                             }
                                             break;

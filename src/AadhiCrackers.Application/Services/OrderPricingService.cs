@@ -59,6 +59,16 @@ public class OrderPricingService : IOrderPricingService
     public static string ResolveOrderCustomerEmail(string? currentUserEmail) =>
         string.IsNullOrWhiteSpace(currentUserEmail) ? GuestCustomerEmail : currentUserEmail;
 
+    /// <summary>
+    /// True when this email is the SHARED guest bucket rather than one real person. Every anonymous
+    /// checkout lands on that single customer record, so anything that answers "show me everything
+    /// belonging to this customer" must refuse it - one guest would otherwise be handed every other
+    /// guest's data. Used by the notification feature to decide ownership.
+    /// </summary>
+    public static bool IsSharedGuestBucket(string? email) =>
+        !string.IsNullOrWhiteSpace(email) &&
+        string.Equals(email.Trim(), GuestCustomerEmail, StringComparison.OrdinalIgnoreCase);
+
     private readonly IApplicationDbContext _context;
 
     public OrderPricingService(IApplicationDbContext context)
