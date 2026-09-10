@@ -120,6 +120,14 @@ public class NotificationService : INotificationService
         return Task.CompletedTask;
     }
 
+    public Task SendOrderDispatchedAsync(Order order, string carrierName, string trackingNumber, string? carrierPhone, string? carrierAddress, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "📦 [Notification Service] Dispatch notification dispatched for Order #{OrderNumber}: carrier {CarrierName}, LR/waybill {TrackingNumber}, transport office phone {CarrierPhone}, address {CarrierAddress}",
+            order.OrderNumber, carrierName, trackingNumber, carrierPhone ?? "(not recorded)", carrierAddress ?? "(not recorded)");
+        return Task.CompletedTask;
+    }
+
 
     public Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default)
     {

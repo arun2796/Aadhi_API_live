@@ -452,6 +452,11 @@ public class OrderService : IOrderService
         var carrierName = request.CarrierName?.Trim();
         var trackingNumber = request.TrackingNumber?.Trim();
 
+        // Optional transport-office details. Blank / whitespace-only input is stored as null
+        // rather than an empty string, so clients can test a single "is it known" condition.
+        var carrierPhone = string.IsNullOrWhiteSpace(request.CarrierPhone) ? null : request.CarrierPhone.Trim();
+        var carrierAddress = string.IsNullOrWhiteSpace(request.CarrierAddress) ? null : request.CarrierAddress.Trim();
+
         if (string.IsNullOrWhiteSpace(carrierName))
             throw new DomainException("Carrier name is required to dispatch an order.");
 
@@ -476,6 +481,8 @@ public class OrderService : IOrderService
 
         order.CarrierName = carrierName;
         order.TrackingNumber = trackingNumber;
+        order.CarrierPhone = carrierPhone;
+        order.CarrierAddress = carrierAddress;
 
         var reason = $"Dispatched via {carrierName} — LR {trackingNumber}";
         if (!string.IsNullOrWhiteSpace(request.Notes))
@@ -513,7 +520,7 @@ public class OrderService : IOrderService
             order.Id.ToString(),
             order.OrderNumber,
             before: new { Status = oldStatus.ToString() },
-            after: new { Status = order.OrderStatus.ToString(), order.CarrierName, order.TrackingNumber },
+            after: new { Status = order.OrderStatus.ToString(), order.CarrierName, order.TrackingNumber, order.CarrierPhone, order.CarrierAddress },
             cancellationToken: cancellationToken);
 
         await _outbox.EnqueueAsync("OrderDispatched", new
@@ -522,6 +529,8 @@ public class OrderService : IOrderService
             order.OrderNumber,
             order.CarrierName,
             order.TrackingNumber,
+            order.CarrierPhone,
+            order.CarrierAddress,
             OldStatus = oldStatus.ToString(),
             NewStatus = order.OrderStatus.ToString(),
             CustomerEmail = order.Customer?.Email
@@ -673,6 +682,8 @@ public class OrderService : IOrderService
             ExpectedDeliveryTo = order.PlacedAtUtc.AddDays(etaMax),
             CarrierName = order.CarrierName,
             TrackingNumber = order.TrackingNumber,
+            CarrierPhone = order.CarrierPhone,
+            CarrierAddress = order.CarrierAddress,
             DeliveryAddressSummary = order.ShippingAddress.ToSingleLine(),
             Timeline = order.StatusHistories.OrderBy(h => h.ChangedAtUtc).Select(h => new OrderStatusHistoryDto
             {
@@ -1113,6 +1124,8 @@ public class OrderService : IOrderService
             Notes = o.Notes,
             CarrierName = o.CarrierName,
             TrackingNumber = o.TrackingNumber,
+            CarrierPhone = o.CarrierPhone,
+            CarrierAddress = o.CarrierAddress,
             PlacedAtUtc = o.PlacedAtUtc,
             DeliveryMethod = NormalizeDeliveryMethod(o.DeliveryMethod),
             ExpectedDeliveryFrom = o.PlacedAtUtc.AddDays(etaMin),

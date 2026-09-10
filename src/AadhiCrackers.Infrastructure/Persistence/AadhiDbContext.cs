@@ -171,6 +171,10 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.Property(o => o.OrderNumber).IsRequired().HasMaxLength(50);
             b.Property(o => o.PackingChargePercent).HasPrecision(5, 2);
 
+            // Transport-office contact recorded at dispatch, per consignment.
+            b.Property(o => o.CarrierPhone).HasMaxLength(50);
+            b.Property(o => o.CarrierAddress).HasMaxLength(500);
+
             b.OwnsOne(o => o.ShippingAddress);
             b.OwnsOne(o => o.BillingAddress);
 

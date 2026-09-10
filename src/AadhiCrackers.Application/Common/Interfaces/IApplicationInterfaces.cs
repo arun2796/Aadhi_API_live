@@ -82,6 +82,7 @@ public interface INotificationService
     Task SendOrderStatusUpdatedAsync(Order order, CancellationToken cancellationToken = default);
     Task SendPaymentVerifiedAsync(Order order, CancellationToken cancellationToken = default);
     Task SendPaymentRejectedAsync(Order order, string reason, CancellationToken cancellationToken = default);
+    Task SendOrderDispatchedAsync(Order order, string carrierName, string trackingNumber, string? carrierPhone, string? carrierAddress, CancellationToken cancellationToken = default);
     Task SendLowStockAlertAsync(Product product, int currentStock, CancellationToken cancellationToken = default);
     Task SendPasswordResetOtpAsync(string recipient, string otpCode, CancellationToken cancellationToken = default);
 }

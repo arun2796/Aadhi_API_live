@@ -138,6 +138,11 @@ public class OrderDto
     // Dispatch details
     public string? CarrierName { get; set; }
     public string? TrackingNumber { get; set; } // LR / waybill number issued by the carrier
+
+    // Transport office the customer collects the consignment from: the number to call and the
+    // branch address. Optional — a dispatch may be recorded before the office details are known.
+    public string? CarrierPhone { get; set; }
+    public string? CarrierAddress { get; set; }
     public DateTime PlacedAtUtc { get; set; }
 
     // Delivery
@@ -213,6 +218,18 @@ public class DispatchOrderRequest
     /// <summary>LR (lorry receipt) / waybill number issued by the carrier.</summary>
     public string TrackingNumber { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Optional. Phone number of the transport office the customer should call to arrange
+    /// collection. Blank/whitespace is stored as null.
+    /// </summary>
+    public string? CarrierPhone { get; set; }
+
+    /// <summary>
+    /// Optional. Address of the transport office / branch where the parcel can be collected.
+    /// Blank/whitespace is stored as null.
+    /// </summary>
+    public string? CarrierAddress { get; set; }
+
     public string? Notes { get; set; }
 }
 
@@ -243,6 +260,11 @@ public class OrderTrackingDto
     public DateTime? ExpectedDeliveryTo { get; set; }
     public string? CarrierName { get; set; }
     public string? TrackingNumber { get; set; } // LR / waybill number issued by the carrier
+
+    // Transport office the customer collects from. A guest has no account, so this endpoint is
+    // their only route to these details.
+    public string? CarrierPhone { get; set; }
+    public string? CarrierAddress { get; set; }
     public string DeliveryAddressSummary { get; set; } = string.Empty;
     public List<OrderStatusHistoryDto> Timeline { get; set; } = new();
     public List<OrderItemDto> Items { get; set; } = new();

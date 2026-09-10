@@ -137,7 +137,9 @@ public class OrdersController : ControllerBase
 
     /// <summary>
     /// Hands the consignment to a transport company / parcel service: records the carrier and
-    /// its LR (lorry receipt) / waybill number and moves the order to Shipped.
+    /// its LR (lorry receipt) / waybill number and moves the order to Shipped. Optionally records
+    /// the transport office's phone number and branch address so the customer knows where to
+    /// collect the goods and who to call.
     /// </summary>
     [HttpPost("{id:guid}/dispatch")]
     [Authorize(Policy = "RequireAdmin")]

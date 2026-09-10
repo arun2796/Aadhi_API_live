@@ -76,6 +76,13 @@ public class Order : AggregateRoot<Guid>
     // and the LR (lorry receipt) / waybill number issued by that carrier.
     public string? CarrierName { get; set; }
     public string? TrackingNumber { get; set; }
+
+    // Transport-office contact details for THIS consignment. Goods travel by lorry to a
+    // transport office and the customer collects them there, so they need to phone the office
+    // and know which branch to walk into. The same carrier has a different branch and phone per
+    // destination city, so these belong to the order, not to a per-carrier address book.
+    public string? CarrierPhone { get; set; }
+    public string? CarrierAddress { get; set; }
     public DateTime PlacedAtUtc { get; set; } = DateTime.UtcNow;
     public string DeliveryMethod { get; set; } = "transport"; // transport (the only method; legacy codes normalize to it)
     public bool RewardPointsAwarded { get; set; }

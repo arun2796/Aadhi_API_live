@@ -129,6 +129,40 @@ public class OutboxProcessorBackgroundService : BackgroundService
                                             }
                                             break;
                                         }
+                                    case "OrderDispatched":
+                                        {
+                                            using var doc = JsonDocument.Parse(msg.PayloadJson);
+                                            var root = doc.RootElement;
+
+                                            // Carrier details are read from the event payload rather than the order row so a
+                                            // replayed / dead-lettered message still reports the consignment it was raised for.
+                                            // CarrierPhone / CarrierAddress were added to the payload later, so messages
+                                            // enqueued before that change simply have no such property.
+                                            static string? ReadString(JsonElement element, string propertyName) =>
+                                                element.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.String
+                                                    ? prop.GetString()
+                                                    : null;
+
+                                            if (root.TryGetProperty("OrderId", out var orderIdProp) &&
+                                                Guid.TryParse(orderIdProp.GetString(), out var orderId))
+                                            {
+                                                var order = await context.Orders
+                                                    .Include(o => o.Customer)
+                                                    .FirstOrDefaultAsync(o => o.Id == orderId, stoppingToken);
+
+                                                if (order != null)
+                                                {
+                                                    await notificationService.SendOrderDispatchedAsync(
+                                                        order,
+                                                        ReadString(root, "CarrierName") ?? order.CarrierName ?? "Unknown carrier",
+                                                        ReadString(root, "TrackingNumber") ?? order.TrackingNumber ?? "Unknown LR / waybill",
+                                                        ReadString(root, "CarrierPhone") ?? order.CarrierPhone,
+                                                        ReadString(root, "CarrierAddress") ?? order.CarrierAddress,
+                                                        stoppingToken);
+                                                }
+                                            }
+                                            break;
+                                        }
                                     case "PaymentRecorded":
                                     case "AuditLogCreated":
                                         {

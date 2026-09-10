@@ -623,8 +623,16 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CarrierAddress")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<string>("CarrierName")
                         .HasColumnType("text");
+
+                    b.Property<string>("CarrierPhone")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<string>("CouponCode")
                         .HasColumnType("text");
