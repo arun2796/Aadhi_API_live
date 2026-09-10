@@ -120,7 +120,7 @@ public class Phase56CriticalScenariosTests : IDisposable
         // 1. Order 1 takes all 10 available units
         var order1 = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 10 } }
         });
@@ -130,7 +130,7 @@ public class Phase56CriticalScenariosTests : IDisposable
         await Assert.ThrowsAsync<InsufficientStockException>(() =>
             orderService.CreateOrderAsync(new CreateOrderRequest
             {
-                PaymentMethod = PaymentMethod.COD,
+                PaymentMethod = PaymentMethod.UPI,
                 ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
                 Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }
             }));
@@ -147,7 +147,7 @@ public class Phase56CriticalScenariosTests : IDisposable
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 4 } }
         });
@@ -180,7 +180,7 @@ public class Phase56CriticalScenariosTests : IDisposable
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 3 } }
         });
@@ -244,7 +244,7 @@ public class Phase56CriticalScenariosTests : IDisposable
 
         var order = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }
         });
@@ -304,13 +304,13 @@ public class Phase56CriticalScenariosTests : IDisposable
         // Create 2 orders
         var order1 = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 2 } }
         });
         var order2 = await orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 3 } }
         });
@@ -351,7 +351,7 @@ public class Phase56CriticalScenariosTests : IDisposable
         var (orderServiceA, _, _, _) = CreateServices(context, customerA.UserId, "Customer", customerA.Email);
         var orderA = await orderServiceA.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             ShippingAddress = new Address { FullName = "Suresh Raina", Phone = "9876543210", AddressLine1 = "Road 1", City = "Sivakasi", State = "TN", PostalCode = "626123" },
             Items = new List<CreateOrderItemRequest> { new() { ProductId = product.Id, Quantity = 1 } }
         });

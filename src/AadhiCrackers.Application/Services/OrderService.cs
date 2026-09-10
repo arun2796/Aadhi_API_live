@@ -96,6 +96,18 @@ public class OrderService : IOrderService
         if (request.Items.Count == 0)
             throw new DomainException("Cannot create an order with zero items.");
 
+        // Cash on Delivery is not offered. The consignment travels by lorry to a transport office
+        // and the customer collects it there, paying the freight directly to the transport company,
+        // so the shop never handles cash at delivery. PaymentMethod.COD survives in the enum only so
+        // that orders placed before this rule remain readable - no NEW order may carry it.
+#pragma warning disable CS0618 // legacy value referenced deliberately, to reject it
+        if (request.PaymentMethod == PaymentMethod.COD)
+#pragma warning restore CS0618
+        {
+            throw new DomainException(
+                "Cash on Delivery is not available. Please pay by UPI or bank transfer and submit the UTR / payment reference as proof.");
+        }
+
         // Find or create customer
         // Same helper the cart quote uses, so the quote and the order count a coupon's
         // per-customer limit against the same customer record.
@@ -397,7 +409,16 @@ public class OrderService : IOrderService
             }
         }
 
+        // LEGACY ROWS ONLY. Cash on Delivery is no longer offered and CreateOrderAsync rejects it, so
+        // this can never fire for an order placed after that change. It stays because orders already
+        // in the live database carry PaymentMethod = COD, and marking them Delivered is the only
+        // automatic settlement they have: with no UTR they were never going to go through
+        // VerifyPaymentAsync, and dropping this would leave those rows stuck at PaymentStatus.Pending
+        // with permanently unpaid invoices, understating collected revenue in the finance reports.
+        // Do NOT extend this to any live payment method - UPI / bank transfer settle on UTR verification.
+#pragma warning disable CS0618 // legacy value referenced deliberately, for historical rows
         if (request.NewStatus == OrderStatus.Delivered && order.PaymentMethod == PaymentMethod.COD)
+#pragma warning restore CS0618
         {
             order.PaymentStatus = PaymentStatus.Paid;
             foreach (var inv in order.Invoices)

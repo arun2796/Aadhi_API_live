@@ -41,6 +41,19 @@ public enum PaymentMethod
     NetBanking = 5,
     Wallet = 6,
     BankTransfer = 7,
+
+    /// <summary>
+    /// RETAINED FOR HISTORICAL ROWS ONLY - DO NOT REUSE OR RE-OFFER THIS VALUE.
+    /// Cash on Delivery is no longer accepted: goods travel by lorry to a transport office and the
+    /// customer collects them there, paying the freight directly to the transport company, so the
+    /// shop never handles cash at delivery. Payment is UPI or bank transfer with a UTR submitted as
+    /// proof and verified by an admin.
+    /// The member is kept because live orders placed before the change persist PaymentMethod = 8;
+    /// deleting it would make those rows unreadable and would throw when the value is deserialized.
+    /// Order creation rejects it (OrderService.CreateOrderAsync), so no NEW order can carry it -
+    /// the only code allowed to reference it is a legacy read/settlement path over existing rows.
+    /// </summary>
+    [Obsolete("Cash on Delivery is no longer offered. This member exists only so historical orders that persist PaymentMethod = 8 remain readable; never assign it to a new order.")]
     COD = 8
 }
 

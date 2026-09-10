@@ -114,7 +114,7 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         var order1 = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
             CouponCode = "SAVE10",
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             Items = new List<CreateOrderItemRequest>
             {
                 new CreateOrderItemRequest { ProductId = product.Id, Quantity = 4 }
@@ -145,7 +145,7 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         var order2 = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
             CouponCode = "SAVE10",
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             Items = new List<CreateOrderItemRequest>
             {
                 new CreateOrderItemRequest { ProductId = product.Id, Quantity = 4 }
@@ -248,7 +248,7 @@ public class PromotionFinanceAndOutboxTests : IDisposable
         // 2. Order 2 units: Subtotal = 1000, COGS = 2 * 250 = 500
         var order = await _orderService.CreateOrderAsync(new CreateOrderRequest
         {
-            PaymentMethod = PaymentMethod.COD,
+            PaymentMethod = PaymentMethod.UPI,
             Items = new List<CreateOrderItemRequest>
             {
                 new CreateOrderItemRequest { ProductId = product.Id, Quantity = 2 }

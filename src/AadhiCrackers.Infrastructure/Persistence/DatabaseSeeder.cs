@@ -806,7 +806,7 @@ public static class DatabaseSeeder
                     {
                         new { OrderNum = "ORD-2026-001248", CustomerName = "Ramesh Kumar", Amount = 2499m, Status = OrderStatus.Confirmed, Payment = PaymentStatus.Paid, Method = PaymentMethod.UPI, Date = DateTime.UtcNow.AddMinutes(-30) },
                         new { OrderNum = "ORD-2026-001247", CustomerName = "Suresh Babu", Amount = 1999m, Status = OrderStatus.Processing, Payment = PaymentStatus.Paid, Method = PaymentMethod.CreditCard, Date = DateTime.UtcNow.AddHours(-2) },
-                        new { OrderNum = "ORD-2026-001246", CustomerName = "Vijay Kumar", Amount = 3499m, Status = OrderStatus.Pending, Payment = PaymentStatus.Pending, Method = PaymentMethod.COD, Date = DateTime.UtcNow.AddHours(-5) },
+                        new { OrderNum = "ORD-2026-001246", CustomerName = "Vijay Kumar", Amount = 3499m, Status = OrderStatus.Pending, Payment = PaymentStatus.Pending, Method = PaymentMethod.UPI, Date = DateTime.UtcNow.AddHours(-5) },
                         new { OrderNum = "ORD-2026-001245", CustomerName = "Arun Prasad", Amount = 749m, Status = OrderStatus.Delivered, Payment = PaymentStatus.Paid, Method = PaymentMethod.UPI, Date = DateTime.UtcNow.AddDays(-1) },
                         new { OrderNum = "ORD-2026-001244", CustomerName = "Karthik R", Amount = 5999m, Status = OrderStatus.Shipped, Payment = PaymentStatus.Paid, Method = PaymentMethod.NetBanking, Date = DateTime.UtcNow.AddDays(-1) }
                     };

@@ -53,7 +53,11 @@ public class Order : AggregateRoot<Guid>
 
     public OrderStatus OrderStatus { get; set; } = OrderStatus.Pending;
     public PaymentStatus PaymentStatus { get; set; } = PaymentStatus.Pending;
-    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.COD;
+    // UPI is the only payment method actually offered: the customer pays by UPI / bank transfer and
+    // submits the UTR as proof for an admin to verify. Cash on Delivery was never workable for this
+    // business (goods go by lorry to a transport office where the customer collects them and pays the
+    // freight to the transport company), so PaymentMethod.COD is legacy-only - see DomainEnums.cs.
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.UPI;
     public FulfillmentStatus FulfillmentStatus { get; set; } = FulfillmentStatus.Unfulfilled;
 
     public Money ItemsSubtotal { get; set; } = Money.Zero();
