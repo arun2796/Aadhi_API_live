@@ -696,6 +696,13 @@ public class OrderService : IOrderService
                 Tax = i.Tax.ToDecimal(),
                 LineTotal = i.LineTotal.ToDecimal()
             }).ToList(),
+
+            ItemsSubtotal = order.ItemsSubtotal.ToDecimal(),
+            Discount = order.Discount.ToDecimal(),
+            Tax = order.Tax.ToDecimal(),
+            PackingCharges = order.PackingCharges.ToDecimal(),
+            PackingChargePercent = order.PackingChargePercent,
+            ShippingCharge = order.ShippingCharge.ToDecimal(),
             GrandTotal = Math.Max(0m, order.ItemsSubtotal.ToDecimal() - order.Discount.ToDecimal() + order.Tax.ToDecimal() + order.ShippingCharge.ToDecimal() + order.PackingCharges.ToDecimal())
         };
     }

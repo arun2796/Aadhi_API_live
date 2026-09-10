@@ -246,6 +246,15 @@ public class OrderTrackingDto
     public string DeliveryAddressSummary { get; set; } = string.Empty;
     public List<OrderStatusHistoryDto> Timeline { get; set; } = new();
     public List<OrderItemDto> Items { get; set; } = new();
+
+
+    public decimal ItemsSubtotal { get; set; }
+    public decimal Discount { get; set; }
+    public decimal Tax { get; set; }
+    public decimal PackingCharges { get; set; }
+    public decimal PackingChargePercent { get; set; }
+    public decimal ShippingCharge { get; set; }
+
     public decimal GrandTotal { get; set; }
 }
 
