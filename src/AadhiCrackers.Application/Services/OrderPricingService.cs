@@ -53,7 +53,7 @@ public class OrderPricingService : IOrderPricingService
     public const decimal DefaultPackingChargePercent = 1.5m;
 
     /// <summary>Anonymous checkouts are all attributed to this one customer record.</summary>
-    public const string GuestCustomerEmail = "guest@aadhicrackers.com";
+    public const string GuestCustomerEmail = "guest@aadhicracker.in";
 
     /// <summary>The email an order placed by this caller is attributed to.</summary>
     public static string ResolveOrderCustomerEmail(string? currentUserEmail) =>

@@ -3,7 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AadhiCrackers.Application\AadhiCrackers.Application.csproj" />
     <ProjectReference Include="..\AadhiCrackers.Infrastructure\AadhiCrackers.Infrastructure.csproj" />
-    <!-- PostgreSQL migrations assembly; must be loadable at runtime when DatabaseProvider=PostgreSql. -->
+    <!-- Migrations assembly; must be loadable at runtime so MigrateAsync can find the migrations. -->
     <ProjectReference Include="..\AadhiCrackers.Infrastructure.MigrationsPostgres\AadhiCrackers.Infrastructure.MigrationsPostgres.csproj" />
     <ProjectReference Include="..\AadhiCrackers.Contracts\AadhiCrackers.Contracts.csproj" />
   </ItemGroup>
@@ -18,6 +18,18 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      appsettings.Development.json holds REAL local credentials (it is gitignored). It must never
+      reach a server, so it is excluded from publish output here rather than relying on the deploy
+      workflow to delete it afterwards — a manual `dotnet publish` has to be safe too.
+      Production configuration comes entirely from the environment: see
+      deploy/aadhi-api.env.example.
+    -->
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Development.json.example" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <PropertyGroup>

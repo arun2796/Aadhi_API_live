@@ -1,4 +1,4 @@
-﻿using AadhiCrackers.Domain.Enums;
+using AadhiCrackers.Domain.Enums;
 
 namespace AadhiCrackers.Contracts.Catalog;
 
@@ -105,6 +105,12 @@ public class ProductDto
     public bool IsFeatured { get; set; }
     public bool IsBestSeller { get; set; }
     public bool IsNewArrival { get; set; }
+
+    /// <summary>
+    /// True when this product is a pre-packed gift box sold as one sealed SKU. Mutually exclusive
+    /// with <see cref="IsCombo"/>: a gift box never lists the products inside it.
+    /// </summary>
+    public bool IsGiftBox { get; set; }
     public string? PrimaryImageUrl { get; set; }
     public double Rating { get; set; } = 4.8;
     public int ReviewCount { get; set; } = 86;
@@ -164,6 +170,13 @@ public class ProductFilterRequest
 
     public bool? ExcludeCombos { get; set; }
 
+    /// <summary>
+    /// Bound from <c>excludeGiftBoxes</c>. Drops products flagged <c>IsGiftBox</c> from the listing
+    /// so the storefront can show them in their own section instead of mixed into category pages.
+    /// Applied before the count, so <c>totalCount</c> reflects it.
+    /// </summary>
+    public bool? ExcludeGiftBoxes { get; set; }
+
     public string? SortBy { get; set; } // price_asc, price_desc, popularity, new, name_asc
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
@@ -195,6 +208,12 @@ public class CreateProductRequest
     public bool IsFeatured { get; set; }
     public bool IsBestSeller { get; set; }
     public bool IsNewArrival { get; set; }
+
+    /// <summary>
+    /// Marks this product as a pre-packed gift box. A gift box may not also carry
+    /// <see cref="ComboItems"/> — the two are rejected together.
+    /// </summary>
+    public bool IsGiftBox { get; set; }
     public string? SafetyInformation { get; set; }
     public List<string> ImageUrls { get; set; } = new();
 

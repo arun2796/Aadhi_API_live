@@ -11,6 +11,13 @@
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="FluentAssertions" Version="8.0.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.2" />
+    <!-- Test-only: the suite builds throwaway schemas with EnsureCreated on in-memory/file SQLite.
+         Production code is PostgreSQL-only and must never reference this package. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.2" />
+    <!-- Direct override of EF's transitive SQLitePCLRaw 2.1.10, which carries GHSA-2m69-gcr7-jv3q
+         (high severity; 2.1.13 is the first clean version — 2.1.11/12 are still flagged). Test-only, but a red vulnerability warning on every
+         build teaches people to ignore warnings. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />

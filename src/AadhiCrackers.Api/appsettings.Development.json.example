@@ -1,0 +1,25 @@
+{
+  "_comment": "Template for local development. Copy to appsettings.Development.json (gitignored) and fill in real values. The API refuses to start if the connection string or any R2 key is blank while Provider=R2.",
+  "ConnectionStrings": {
+    "_comment": "PostgreSQL only. Either a locally installed PostgreSQL, or the Lightsail database over an SSH tunnel: ssh -L 5432:localhost:5432 ubuntu@<lightsail-ip>",
+    "DefaultConnection": "Host=localhost;Port=5432;Database=aadhicrackers;Username=aadhi;Password=YOUR_LOCAL_PASSWORD"
+  },
+  "JwtSettings": {
+    "_comment": "Any string of 32+ characters is fine locally. Production uses a different value, set as JwtSettings__SecretKey in the environment.",
+    "SecretKey": "REPLACE_WITH_A_LOCAL_DEV_SIGNING_KEY_32_PLUS_CHARS"
+  },
+  "Seeding": {
+    "IncludeDemoData": "true"
+  },
+  "Storage": {
+    "_comment": "Set Provider to 'Local' to write uploads to wwwroot/storage instead and skip the R2 values entirely.",
+    "Provider": "R2",
+    "R2": {
+      "AccountId": "YOUR_CLOUDFLARE_ACCOUNT_ID",
+      "AccessKeyId": "YOUR_R2_ACCESS_KEY_ID",
+      "SecretAccessKey": "YOUR_R2_SECRET_ACCESS_KEY",
+      "BucketName": "aadhicrackers",
+      "PublicBaseUrl": "https://pub-XXXXXXXX.r2.dev"
+    }
+  }
+}

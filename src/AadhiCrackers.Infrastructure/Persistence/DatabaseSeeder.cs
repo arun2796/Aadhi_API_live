@@ -11,7 +11,7 @@ namespace AadhiCrackers.Infrastructure.Persistence;
 
 public static class DatabaseSeeder
 {
-    private const string DefaultAdminEmail = "admin@aadhicrackers.com";
+    private const string DefaultAdminEmail = "admin@aadhicracker.in";
     private const string DefaultAdminPassword = "Admin@123";
 
     /// <summary>The one delivery note the storefront shows. Mirrors OrderService.DefaultTransportNote.</summary>
@@ -104,7 +104,7 @@ public static class DatabaseSeeder
                 new() { Key = "Store.BusinessName", Value = "AADHI CRACKERS", Group = "Store", Description = "Official Business Name" },
                 new() { Key = "Store.Tagline", Value = "Celebrate Every Moment", Group = "Store", Description = "Brand Tagline" },
                 new() { Key = "Store.Phone", Value = "+91 98765 43210", Group = "Store", Description = "Contact Phone" },
-                new() { Key = "Store.Email", Value = "support@aadhicrackers.com", Group = "Store", Description = "Support Email" },
+                new() { Key = "Store.Email", Value = "support@aadhicracker.in", Group = "Store", Description = "Support Email" },
                 new() { Key = "Store.Address", Value = "123, West Street, Sivanandapuram, Coimbatore, Tamil Nadu - 641012", Group = "Store", Description = "Physical Store Address" },
                 new() { Key = "Tax.GstRate", Value = "18.00", Group = "Tax", Description = "Default GST Rate for Fireworks" },
                 // ── Delivery: the store never charges for delivery ──────────────────────────
@@ -264,7 +264,7 @@ public static class DatabaseSeeder
         UserManager<ApplicationUser> userManager)
     {
         // D1. Seed Sample Customer User
-        var customerEmail = "customer@aadhicrackers.com";
+        var customerEmail = "customer@aadhicracker.in";
             var customerUser = await userManager.FindByEmailAsync(customerEmail);
             Customer? customerEntity = null;
 
@@ -426,7 +426,9 @@ public static class DatabaseSeeder
                 context.Categories.AddRange(giftBoxesCat, comboOffersCat, sparklersCat, groundChakkarCat, flowerPotsCat, rocketsCat, aerialShotsCat);
                 await context.SaveChangesAsync();
 
-                // D6. Seed Demo Products matching Screenshot visual design
+                // D6. Seed Demo Products matching Screenshot visual design.
+                // The eight Gift Boxes products carry IsGiftBox = true so a freshly seeded database
+                // populates GET /products/gift-boxes, which now filters on the flag alone.
                 var products = new List<Product>
                 {
                     new Product
@@ -453,6 +455,7 @@ public static class DatabaseSeeder
                         IsFeatured = true,
                         IsBestSeller = true,
                         IsNewArrival = false,
+                        IsGiftBox = true,
                         SafetyInformation = "Keep at least 5 meters distance. Use an incense stick to light. Keep water or sand bucket nearby."
                     },
                     new Product
@@ -479,6 +482,7 @@ public static class DatabaseSeeder
                         IsFeatured = true,
                         IsBestSeller = true,
                         IsNewArrival = true,
+                        IsGiftBox = true,
                         SafetyInformation = "Always light under adult supervision. Do not hold fireworks in hand."
                     },
                     new Product
@@ -504,7 +508,8 @@ public static class DatabaseSeeder
                         IsActive = true,
                         IsFeatured = true,
                         IsBestSeller = false,
-                        IsNewArrival = true
+                        IsNewArrival = true,
+                        IsGiftBox = true
                     },
                     new Product
                     {
@@ -529,7 +534,8 @@ public static class DatabaseSeeder
                         IsActive = true,
                         IsFeatured = true,
                         IsBestSeller = true,
-                        IsNewArrival = false
+                        IsNewArrival = false,
+                        IsGiftBox = true
                     },
                     new Product
                     {
@@ -554,7 +560,8 @@ public static class DatabaseSeeder
                         IsActive = true,
                         IsFeatured = false,
                         IsBestSeller = true,
-                        IsNewArrival = false
+                        IsNewArrival = false,
+                        IsGiftBox = true
                     },
                     new Product
                     {
@@ -579,7 +586,8 @@ public static class DatabaseSeeder
                         IsActive = true,
                         IsFeatured = false,
                         IsBestSeller = true,
-                        IsNewArrival = false
+                        IsNewArrival = false,
+                        IsGiftBox = true
                     },
                     new Product
                     {
@@ -604,7 +612,8 @@ public static class DatabaseSeeder
                         IsActive = true,
                         IsFeatured = false,
                         IsBestSeller = false,
-                        IsNewArrival = false
+                        IsNewArrival = false,
+                        IsGiftBox = true
                     },
                     new Product
                     {
@@ -629,7 +638,8 @@ public static class DatabaseSeeder
                         IsActive = true,
                         IsFeatured = true,
                         IsBestSeller = false,
-                        IsNewArrival = true
+                        IsNewArrival = true,
+                        IsGiftBox = true
                     },
                     new Product
                     {

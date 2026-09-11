@@ -1189,6 +1189,9 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.Property<bool>("IsFeatured")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsGiftBox")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsNewArrival")
                         .HasColumnType("boolean");
 
@@ -1267,6 +1270,8 @@ namespace AadhiCrackers.Infrastructure.MigrationsPostgres.Migrations
                     b.HasIndex("IsBestSeller");
 
                     b.HasIndex("IsFeatured");
+
+                    b.HasIndex("IsGiftBox");
 
                     b.HasIndex("SKU")
                         .IsUnique();

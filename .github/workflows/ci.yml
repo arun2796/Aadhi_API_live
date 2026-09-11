@@ -1,0 +1,75 @@
+name: CI
+
+# Build and test on every branch and every pull request.
+#
+# WHY THIS EXISTS SEPARATELY FROM THE DEPLOY WORKFLOW. deploy-api.yml runs only on ak-dev,
+# the branch that ships. Every other branch — a feature, an experiment — is covered here, so a
+# broken build is found the day it happens, not at merge time.
+on:
+  push:
+    branches-ignore: [ak-dev]    # ak-dev is covered by deploy-api.yml, which runs the same tests
+    paths-ignore:
+      - "docs/**"
+      - "deploy/**"
+      - "**/*.md"
+  pull_request:
+    branches: [ak-dev, main]
+  workflow_dispatch:
+
+concurrency:
+  # A new push to the same branch makes the previous run irrelevant, so cancel it.
+  # (The deploy workflow does the opposite — see the comment there.)
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        run: dotnet test -c Release --no-build --verbosity normal
+
+      # Catches the "I changed an entity and forgot the migration" mistake, which would
+      # otherwise only surface in production as a missing-column error at runtime.
+      # AadhiDbContext suppresses EF's own PendingModelChangesWarning, so this is the
+      # only thing standing between a model change and a schema that does not match it.
+      - name: Check the model matches the migrations
+        env:
+          # has-pending-model-changes compares the model to the migration snapshot and
+          # never opens a connection, so this value only has to parse.
+          ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=ci;Username=ci;Password=ci"
+        run: |
+          dotnet tool install --global dotnet-ef --version 9.* >/dev/null 2>&1 || dotnet tool update --global dotnet-ef --version 9.* >/dev/null 2>&1
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          if ! dotnet ef migrations has-pending-model-changes \
+              --project src/AadhiCrackers.Infrastructure.MigrationsPostgres \
+              --startup-project src/AadhiCrackers.Api \
+              --no-build --configuration Release; then
+            echo "::error::The EF model has changed but no migration was added. Run: dotnet ef migrations add <Name> --project src/AadhiCrackers.Infrastructure.MigrationsPostgres --startup-project src/AadhiCrackers.Api --output-dir Migrations"
+            exit 1
+          fi

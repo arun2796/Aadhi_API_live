@@ -24,6 +24,7 @@ public static class DependencyInjection
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IBannerService, BannerService>();
         services.AddScoped<ISystemHealthService, SystemHealthService>();
+        services.AddScoped<IOutboxAdminService, OutboxAdminService>();
         services.AddScoped<IWishlistService, WishlistService>();
         services.AddScoped<IAddressService, AddressService>();
         // Read/flag side of the in-house notification inbox (rows are written by INotificationService).

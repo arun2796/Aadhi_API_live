@@ -1,8 +1,10 @@
 using AadhiCrackers.Api.Middleware;
+using AadhiCrackers.Api.Serialization;
 using AadhiCrackers.Api.Services;
 using AadhiCrackers.Application;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Infrastructure;
+using AadhiCrackers.Infrastructure.Configuration;
 using AadhiCrackers.Infrastructure.Identity;
 using AadhiCrackers.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -45,13 +47,20 @@ builder.Services.AddControllers(options =>
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        // Every timestamp column is PostgreSQL "timestamp with time zone", and Npgsql rejects a
+        // DateTime whose Kind is not Utc. A JSON date without a trailing "Z" deserializes as
+        // Unspecified, so without these converters such a request would blow up at SaveChanges
+        // with an error that names neither the field nor the request.
+        options.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new NullableUtcDateTimeJsonConverter());
     });
 
 builder.Services.AddAppRateLimiting();
 
 // 4. CORS
 // Origins come from config key "Cors:AllowedOrigins" (env Cors__AllowedOrigins) as a semicolon-
-// or comma-separated list, e.g. "https://aadhi-crackers-store.onrender.com;https://aadhi-crackers-erp.onrender.com".
+// or comma-separated list, e.g. "https://aadhicracker.in;https://adminerp.aadhicracker.in".
 // When configured, CORS is restricted to exactly those origins; when empty, the historical
 // allow-all behavior is kept (and a warning is logged outside Development).
 var corsAllowedOrigins = (builder.Configuration["Cors:AllowedOrigins"] ?? string.Empty)
@@ -83,7 +92,7 @@ builder.Services.AddCors(options =>
 
 // 5. Health Checks
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<AadhiDbContext>("SQLite Database", tags: new[] { "ready", "db" });
+    .AddDbContextCheck<AadhiDbContext>("PostgreSQL Database", tags: new[] { "ready", "db" });
 
 // 6. OpenAPI / Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -97,7 +106,7 @@ builder.Services.AddSwaggerGen(c =>
         Contact = new OpenApiContact
         {
             Name = "AADHI CRACKERS Team",
-            Email = "support@aadhicrackers.com"
+            Email = "support@aadhicracker.in"
         }
     });
 
@@ -129,25 +138,67 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// 7. Production configuration warnings (warn loudly, never block startup)
+// 7. Production configuration checks
 if (!app.Environment.IsDevelopment())
 {
+    // REFUSING TO START IS THE POINT. The fallback secret is a constant in this repository, so
+    // anyone who can read the source can mint a valid SuperAdmin token against a deployment that
+    // still uses it. A warning in a log nobody reads is not a defence — this is the same policy
+    // already applied to a missing database connection string and missing R2 credentials.
     if (JwtSecretProvider.IsDefaultSecret(app.Configuration))
     {
-        app.Logger.LogWarning("⚠️ SECURITY WARNING: Default JWT secret in use — set Jwt__Secret");
+        throw new InvalidOperationException(
+            "JwtSettings:SecretKey is unset, so the built-in default signing key would be used. " +
+            "That key is public (it is a constant in this repository) and anyone holding it can forge " +
+            "an admin token. Set JwtSettings__SecretKey in the environment — generate one with " +
+            "'openssl rand -base64 48'. Changing it signs everyone out, which is expected.");
     }
 
+    // HS256 keys shorter than the 256-bit hash add no security beyond their own length.
+    var configuredSecret = JwtSecretProvider.Resolve(app.Configuration);
+    if (System.Text.Encoding.UTF8.GetByteCount(configuredSecret) < 32)
+    {
+        throw new InvalidOperationException(
+            $"JwtSettings:SecretKey is only {System.Text.Encoding.UTF8.GetByteCount(configuredSecret)} bytes. " +
+            "HS256 needs at least 32. Generate one with 'openssl rand -base64 48'.");
+    }
+
+    // CORS stays a warning: allow-all is bad practice but, unlike a forgeable token, it does not
+    // by itself hand anyone an admin session — and blocking startup over it could take the shop
+    // offline for a misconfigured origin during a launch.
     if (corsAllowedOrigins.Length == 0)
     {
         app.Logger.LogWarning(
             "⚠️ SECURITY WARNING: CORS is allowing all origins — set Cors__AllowedOrigins " +
-            "(e.g. \"https://aadhi-crackers-store.onrender.com;https://aadhi-crackers-erp.onrender.com\") to restrict access");
+            "(e.g. \"https://aadhicracker.in;https://adminerp.aadhicracker.in\") to restrict access");
     }
 }
 
 if (corsAllowedOrigins.Length > 0)
 {
     app.Logger.LogInformation("CORS restricted to configured origins: {Origins}", string.Join(", ", corsAllowedOrigins));
+}
+
+// State the image storage provider in the boot log. "Which provider is this deploy actually
+// using?" is the first question when uploaded product images go missing, and it should be
+// answerable from the logs without reproducing anything. Only non-secret values are printed.
+var storageOptions = app.Services.GetRequiredService<StorageOptions>();
+if (storageOptions.UsesR2)
+{
+    app.Logger.LogInformation(
+        "🗄️ Image storage: Cloudflare R2 — bucket '{Bucket}', endpoint {Endpoint}, public URLs under {PublicBaseUrl}",
+        storageOptions.R2.BucketName, storageOptions.R2.ServiceUrl, storageOptions.R2.PublicBaseUrl);
+}
+else
+{
+    app.Logger.LogInformation("🗄️ Image storage: local disk (wwwroot/storage). Set Storage__Provider=R2 for durable hosting.");
+
+    if (!app.Environment.IsDevelopment())
+    {
+        app.Logger.LogWarning(
+            "⚠️ Uploaded images are being written to the server's local disk and WILL BE LOST on the next deploy. " +
+            "Set Storage__Provider=R2 plus Storage__R2__AccountId / AccessKeyId / SecretAccessKey / BucketName / PublicBaseUrl.");
+    }
 }
 
 // 8. Seed Database and Initial Provisioning
@@ -197,7 +248,20 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseStaticFiles();
+// Uploaded objects get the same one-year immutable cache header the R2 provider writes, so the
+// local provider is a faithful rehearsal of production rather than a subtly different one. This is
+// only safe because upload keys are random: a replaced image is a new key and therefore a new URL,
+// so a cached copy can never be stale. Everything else under wwwroot keeps the default handling.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        if (ctx.Context.Request.Path.StartsWithSegments("/storage", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        }
+    }
+});
 
 app.UseRouting();
 

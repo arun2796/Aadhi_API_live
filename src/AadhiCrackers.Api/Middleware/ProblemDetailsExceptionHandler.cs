@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using AadhiCrackers.Application.Common;
 using AadhiCrackers.Domain.Exceptions;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
@@ -50,6 +51,18 @@ public class ProblemDetailsExceptionHandler : IExceptionHandler
                 HttpStatusCode.Conflict,
                 "Insufficient Stock",
                 stockEx.Message,
+                null
+            ),
+            // The object store (Cloudflare R2) refused us or could not be reached. This is NOT the
+            // caller's fault, so it is a 502 rather than a 400, and the message is passed through
+            // verbatim even in production: FileStorageException is constructed to name the exact
+            // Storage:R2:* key most likely misconfigured, and the shop owner cannot fix a
+            // "contact your administrator" placeholder. It never carries a credential — see
+            // R2FileStorageService.Translate.
+            FileStorageException storageEx => (
+                HttpStatusCode.BadGateway,
+                "Image Storage Unavailable",
+                storageEx.Message,
                 null
             ),
             DbUpdateConcurrencyException or ConcurrencyConflictException => (

@@ -1,4 +1,4 @@
-﻿using AadhiCrackers.Application.Common;
+using AadhiCrackers.Application.Common;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Contracts.Catalog;
 using AadhiCrackers.Contracts.Common;
@@ -426,6 +426,11 @@ public class CatalogService : ICatalogService
         if (filter.ExcludeCombos == true)
             query = query.Where(p => !p.ComboItems.Any());
 
+        // Applied here, before the sort / CountAsync / paging, so totalCount reflects it and the
+        // storefront can show gift boxes in their own section instead of inside category listings.
+        if (filter.ExcludeGiftBoxes == true)
+            query = query.Where(p => !p.IsGiftBox);
+
         query = filter.SortBy switch
         {
 
@@ -535,6 +540,7 @@ public class CatalogService : ICatalogService
             IsFeatured = request.IsFeatured,
             IsBestSeller = request.IsBestSeller,
             IsNewArrival = request.IsNewArrival,
+            IsGiftBox = request.IsGiftBox,
             SafetyInformation = request.SafetyInformation
         };
 
@@ -648,6 +654,7 @@ public class CatalogService : ICatalogService
         product.IsFeatured = request.IsFeatured;
         product.IsBestSeller = request.IsBestSeller;
         product.IsNewArrival = request.IsNewArrival;
+        product.IsGiftBox = request.IsGiftBox;
         product.SafetyInformation = request.SafetyInformation;
         product.UpdatedAtUtc = DateTime.UtcNow;
 
@@ -785,10 +792,10 @@ public class CatalogService : ICatalogService
             .Include(p => p.Images)
             .Include(p => p.Reviews)
             .Include(p => p.ComboItems)
-            // A product with a real composition is a gift box no matter what it is called,
-            // so it is included alongside the historical name/category/type matching.
-            .Where(p => (p.ComboItems.Any() || p.ProductType == ProductType.Bundle || p.Category.Name.ToLower().Contains("gift box") || p.Name.ToLower().Contains("gift box")) && p.IsActive && !p.IsDeleted)
-            .OrderByDescending(p => p.ComboItems.Any())
+            // Exactly what the admin has flagged — nothing is inferred from the name, the category
+            // or the product type. A gift box is a sealed SKU, so unlike GetComboOffersAsync below
+            // there is no composition to rank on and the flag alone decides membership.
+            .Where(p => p.IsGiftBox && p.IsActive && !p.IsDeleted)
             .Take(count)
             .Select(p => MapToProductDto(p))
             .ToListAsync(cancellationToken);
@@ -864,6 +871,7 @@ public class CatalogService : ICatalogService
             IsFeatured = p.IsFeatured,
             IsBestSeller = p.IsBestSeller,
             IsNewArrival = p.IsNewArrival,
+            IsGiftBox = p.IsGiftBox,
             PrimaryImageUrl = primaryImage,
             Rating = rating,
             ReviewCount = reviewCount,
@@ -936,6 +944,7 @@ public class CatalogService : ICatalogService
             IsFeatured = baseDto.IsFeatured,
             IsBestSeller = baseDto.IsBestSeller,
             IsNewArrival = baseDto.IsNewArrival,
+            IsGiftBox = baseDto.IsGiftBox,
             PrimaryImageUrl = baseDto.PrimaryImageUrl,
             Rating = baseDto.Rating,
             ReviewCount = baseDto.ReviewCount,
@@ -964,12 +973,31 @@ public class CatalogService : ICatalogService
     ///
     /// The selling price is NEVER touched here: Price and CompareAtPrice stay exactly as the owner
     /// typed them. Only ProductDetailDto.ComboItemsTotal exposes what the parts are worth.
+    ///
+    /// This is also the single place that enforces "a product is never both a combo and a gift
+    /// box", because it is the only point on both the create and the update path that knows the
+    /// composition the request ends up with.
     /// </summary>
     private async Task ApplyComboItemsAsync(
         Product product,
         List<CreateComboItemRequest>? requestedItems,
         CancellationToken cancellationToken)
     {
+        // A combo and a gift box are mutually exclusive (see Product.IsGiftBox). "Combo" is not a
+        // stored flag but a derived fact — having components — so the check has to look at the
+        // composition this request LEAVES BEHIND, which for the null (field omitted) case is
+        // whatever is already stored. Both callers set IsGiftBox from the request before getting
+        // here, so product.IsGiftBox is already the requested value.
+        var willHaveComboItems = requestedItems is null
+            ? product.ComboItems.Any(ci => !ci.IsDeleted)
+            : requestedItems.Count > 0;
+
+        if (product.IsGiftBox && willHaveComboItems)
+        {
+            throw new DomainException(
+                $"'{product.Name}' cannot be a combo and a gift box at the same time. A gift box is sold as one sealed box without listing what is inside, so either clear its combo items or untick 'Gift Box'.");
+        }
+
         // Three-state contract (see UpdateProductRequest.ComboItems):
         //   null       -> the caller did not send the field: leave the composition EXACTLY as it is.
         //   empty list -> the caller cleared it: drop every item, back to a simple product.

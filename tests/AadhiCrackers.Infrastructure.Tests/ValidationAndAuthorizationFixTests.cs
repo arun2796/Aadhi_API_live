@@ -41,7 +41,7 @@ public class ValidationAndAuthorizationFixTests : IDisposable
     private sealed class TestCurrentUserService : ICurrentUserService
     {
         public string? UserId { get; set; } = Guid.NewGuid().ToString();
-        public string? Email { get; set; } = "customer@aadhicrackers.com";
+        public string? Email { get; set; } = "customer@aadhicracker.in";
         public string? UserName { get; set; } = "testCustomer";
         public string? Role { get; set; } = "Customer";
         public string? IpAddress { get; set; } = "192.168.1.100";

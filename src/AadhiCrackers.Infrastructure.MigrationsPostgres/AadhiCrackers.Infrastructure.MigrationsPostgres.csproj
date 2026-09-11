@@ -1,23 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    PostgreSQL-only migrations assembly for AadhiDbContext.
+    Migrations assembly for AadhiDbContext. PostgreSQL is the only supported provider.
 
-    The historical migrations in AadhiCrackers.Infrastructure/Persistence/Migrations were generated
-    against the SQLite provider and cannot be applied through Npgsql. EF Core's supported pattern for
-    one DbContext targeting multiple providers is one migrations assembly per provider
-    (https://learn.microsoft.com/ef/core/managing-schemas/migrations/providers). The provider chosen
-    at runtime (DatabaseProvider config key, see AadhiCrackers.Infrastructure/DependencyInjection.cs)
-    selects the matching assembly via MigrationsAssembly:
-      - Sqlite   -> AadhiCrackers.Infrastructure           (Persistence/Migrations)
-      - Postgres -> AadhiCrackers.Infrastructure.MigrationsPostgres (this project, Migrations/)
+    Keeping migrations in their own assembly (wired up through MigrationsAssembly in
+    AadhiCrackers.Infrastructure/DependencyInjection.cs) keeps the schema history separate from the
+    runtime model, so a model change is never silently applied without a migration to match.
 
-    To add a new PostgreSQL migration (PowerShell, from the repo root):
-      $env:DatabaseProvider = 'PostgreSql'
-      $env:ConnectionStrings__DefaultConnection = 'Host=localhost;Database=design;Username=design;Password=design'
-      dotnet ef migrations add [Name]
-        with "project" = src/AadhiCrackers.Infrastructure.MigrationsPostgres,
-             "startup-project" = src/AadhiCrackers.Api, "output-dir" = Migrations
+    To add a new migration (PowerShell, from the repo root), run "dotnet ef migrations add [Name]"
+    with these options (double-dash prefixed; they cannot be written literally inside an XML comment):
+      project        = src/AadhiCrackers.Infrastructure.MigrationsPostgres
+      startup-project = src/AadhiCrackers.Api
+      output-dir     = Migrations
+    with $env:ConnectionStrings__DefaultConnection set to a reachable PostgreSQL database.
   -->
 
   <PropertyGroup>

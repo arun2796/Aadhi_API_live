@@ -19,7 +19,7 @@ public class Notification : BaseEntity<Guid>
 {
     /// <summary>
     /// Owning customer, or NULL when the notification has no single owner that a per-customer query
-    /// may serve. Guest checkouts all share one customer record (guest@aadhicrackers.com), so a
+    /// may serve. Guest checkouts all share one customer record (guest@aadhicracker.in), so a
     /// guest order's notification is stored with CustomerId = NULL on purpose: that makes it
     /// structurally impossible for "my notifications" to hand one guest another guest's messages.
     /// Such a row is reachable only through its order number. See NotificationService.

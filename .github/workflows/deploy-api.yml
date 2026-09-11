@@ -1,0 +1,234 @@
+name: Deploy API to Lightsail
+
+# Pushes to ak-dev — the working branch — ship to production; the test job is the gate.
+# Run it by hand from the Actions tab to redeploy the same commit — for example after
+# editing /etc/aadhi-api/aadhi-api.env on the server.
+on:
+  push:
+    branches: [ak-dev]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+# One deploy at a time, and NEVER cancel one in flight: a cancelled run can leave the release
+# half-rsynced or the service mid-restart. A second push waits its turn instead.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  # Self-contained: the Lightsail instance needs no .NET runtime installed.
+  # Change to linux-arm64 if the instance is an ARM (Graviton) Lightsail blueprint.
+  RUNTIME_ID: linux-x64
+  APP_ROOT: /var/www/aadhi-api
+
+jobs:
+  # Fails in seconds if configuration is missing, rather than after a full build and test run.
+  preflight:
+    name: Check configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Required secrets are present
+        env:
+          LIGHTSAIL_HOST: ${{ secrets.LIGHTSAIL_HOST }}
+          LIGHTSAIL_USER: ${{ secrets.LIGHTSAIL_USER }}
+          LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+        run: |
+          missing=()
+          if [ -z "$LIGHTSAIL_HOST" ];    then missing+=("LIGHTSAIL_HOST"); fi
+          if [ -z "$LIGHTSAIL_USER" ];    then missing+=("LIGHTSAIL_USER"); fi
+          if [ -z "$LIGHTSAIL_SSH_KEY" ]; then missing+=("LIGHTSAIL_SSH_KEY"); fi
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secret(s): ${missing[*]}. Add them under Settings → Secrets and variables → Actions → Secrets. See docs/GITHUB_ACTIONS.md."
+            exit 1
+          fi
+
+          # A key pasted through a form often loses its trailing newline or arrives as a
+          # PuTTY .ppk. Both produce "libcrypto: error" from ssh, which names nothing useful.
+          case "$LIGHTSAIL_SSH_KEY" in
+            *"BEGIN OPENSSH PRIVATE KEY"*|*"BEGIN RSA PRIVATE KEY"*|*"BEGIN EC PRIVATE KEY"*) ;;
+            *"PuTTY-User-Key-File"*)
+              echo "::error::LIGHTSAIL_SSH_KEY is a PuTTY .ppk key. Convert it with: puttygen key.ppk -O private-openssh -o key.pem"
+              exit 1 ;;
+            *)
+              echo "::error::LIGHTSAIL_SSH_KEY does not look like an OpenSSH private key. Paste the PRIVATE key file in full, including the BEGIN and END lines — not the .pub file."
+              exit 1 ;;
+          esac
+
+          echo "All required secrets are present."
+
+      - name: Report optional variables
+        env:
+          API_PUBLIC_URL: ${{ vars.API_PUBLIC_URL }}
+        run: |
+          if [ -z "$API_PUBLIC_URL" ]; then
+            echo "::warning::Repository variable API_PUBLIC_URL is not set, so the post-deploy public smoke test will be skipped. The deploy still verifies health on the server itself."
+          else
+            echo "API_PUBLIC_URL = $API_PUBLIC_URL"
+          fi
+
+  build:
+    name: Build and test
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      # The only gate between a push and production.
+      - name: Test
+        run: dotnet test -c Release --no-build --verbosity normal
+
+      - name: Publish (self-contained)
+        run: |
+          dotnet publish src/AadhiCrackers.Api/AadhiCrackers.Api.csproj \
+            -c Release \
+            -r ${{ env.RUNTIME_ID }} \
+            --self-contained true \
+            -p:PublishSingleFile=false \
+            -p:DebugType=none \
+            -o publish
+
+          # Belt and braces: the csproj already excludes these from publish, but a release
+          # carrying local development credentials to the server must be impossible.
+          rm -f publish/appsettings.Development.json publish/appsettings.Development.json.example
+
+          if [ -f publish/appsettings.Development.json ]; then
+            echo "::error::appsettings.Development.json is still in the publish output."
+            exit 1
+          fi
+          if [ ! -f publish/AadhiCrackers.Api ]; then
+            echo "::error::No AadhiCrackers.Api executable in the publish output — the self-contained publish did not produce an apphost."
+            exit 1
+          fi
+
+          echo "Publish size: $(du -sh publish | cut -f1)"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-release
+          path: publish/
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true
+
+  deploy:
+    name: Deploy to Lightsail
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # deploy-release.sh is shipped from the repo rather than trusted from the box,
+      # so the script and the release it activates always come from the same commit.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy
+          sparse-checkout-cone-mode: false
+
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: api-release
+          path: publish
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          HOST: ${{ secrets.LIGHTSAIL_HOST }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pin the host key on first use, so the deploy fails loudly if the host identity
+          # ever changes rather than silently trusting a different machine.
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ! grep -q . ~/.ssh/known_hosts 2>/dev/null; then
+            echo "::error::ssh-keyscan got no host key from '$HOST'. Check LIGHTSAIL_HOST resolves, that port 22 is open in the Lightsail console firewall, and that the instance is running."
+            exit 1
+          fi
+
+      - name: Verify the connection
+        env:
+          HOST: ${{ secrets.LIGHTSAIL_HOST }}
+          USER: ${{ secrets.LIGHTSAIL_USER }}
+        run: |
+          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=15 "$USER@$HOST" 'echo connected as $(whoami)'; then
+            echo "::error::Cannot SSH to $USER@$HOST. Check the public half of LIGHTSAIL_SSH_KEY is in ~$USER/.ssh/authorized_keys on the instance."
+            exit 1
+          fi
+
+          # rsync writes straight into the releases directory; provision-lightsail.sh grants
+          # this through group membership, which only takes effect after a fresh login.
+          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$USER@$HOST" "test -w ${{ env.APP_ROOT }}/releases"; then
+            echo "::error::$USER cannot write to ${{ env.APP_ROOT }}/releases. Run provision-lightsail.sh, then log out and back in once so the 'aadhi' group membership applies."
+            exit 1
+          fi
+
+      - name: Upload release
+        env:
+          HOST: ${{ secrets.LIGHTSAIL_HOST }}
+          USER: ${{ secrets.LIGHTSAIL_USER }}
+        run: |
+          RELEASE_ID="${{ github.sha }}"
+          echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
+
+          ssh -i ~/.ssh/deploy_key "$USER@$HOST" "mkdir -p ${{ env.APP_ROOT }}/releases/$RELEASE_ID"
+          rsync -az --delete --info=stats1 \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            publish/ "$USER@$HOST:${{ env.APP_ROOT }}/releases/$RELEASE_ID/"
+
+      - name: Activate release
+        env:
+          HOST: ${{ secrets.LIGHTSAIL_HOST }}
+          USER: ${{ secrets.LIGHTSAIL_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key deploy/deploy-release.sh "$USER@$HOST:/tmp/deploy-release.sh"
+          ssh -i ~/.ssh/deploy_key "$USER@$HOST" "bash /tmp/deploy-release.sh '${RELEASE_ID}'"
+
+      # deploy-release.sh already health-checks on the server and rolls back on failure.
+      # This confirms the same release is reachable from OUTSIDE — through DNS, the Lightsail
+      # firewall, nginx and TLS, none of which the on-box check touches.
+      - name: Smoke test the public endpoint
+        if: ${{ vars.API_PUBLIC_URL != '' }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --max-time 10 "${{ vars.API_PUBLIC_URL }}/health/ready"; then
+              echo ""
+              echo "Public health check OK."
+              exit 0
+            fi
+            echo "Attempt $attempt failed; retrying in 5s."
+            sleep 5
+          done
+          echo "::error::${{ vars.API_PUBLIC_URL }}/health/ready did not respond. The release is live and healthy ON THE SERVER but is not reachable publicly — check nginx, TLS and the Lightsail firewall."
+          exit 1
+
+      - name: Clean up the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

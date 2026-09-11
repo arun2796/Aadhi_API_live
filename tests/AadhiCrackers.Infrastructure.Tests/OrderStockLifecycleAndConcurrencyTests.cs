@@ -26,7 +26,7 @@ public class OrderStockLifecycleAndConcurrencyTests
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
 
@@ -74,7 +74,7 @@ public class OrderStockLifecycleAndConcurrencyTests
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
 
@@ -124,7 +124,7 @@ public class OrderStockLifecycleAndConcurrencyTests
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
 
@@ -188,7 +188,7 @@ public class OrderStockLifecycleAndConcurrencyTests
 
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 var (category, product, customer) = await SeedBaseDataAsync(context);
                 productId = product.Id;
 
@@ -237,7 +237,7 @@ public class OrderStockLifecycleAndConcurrencyTests
             Guid orderId;
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 var (category, product, customer) = await SeedBaseDataAsync(context);
 
                 var orderService = CreateOrderService(context);
@@ -295,7 +295,7 @@ public class OrderStockLifecycleAndConcurrencyTests
         {
             FirstName = "Arun",
             LastName = "Kumar",
-            Email = "customer@aadhicrackers.com",
+            Email = "customer@aadhicracker.in",
             Phone = "9876543210",
             CustomerCode = "CUST-001"
         };
@@ -330,7 +330,7 @@ public class OrderStockLifecycleAndConcurrencyTests
     private sealed class TestCurrentUserService : ICurrentUserService
     {
         public string? UserId => "test-user-id";
-        public string? Email => "admin@aadhicrackers.com";
+        public string? Email => "admin@aadhicracker.in";
         public string? UserName => "admin";
         public string? Role => "SuperAdmin";
         public string? IpAddress => "127.0.0.1";

@@ -56,7 +56,7 @@ public class ReviewsAndBannersWorkflowTests
         {
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
 
                 var (product, customer) = await SeedProductAndCustomerAsync(context);
 
@@ -137,7 +137,7 @@ public class ReviewsAndBannersWorkflowTests
         {
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 await SeedProductAndCustomerAsync(context);
             }
 
@@ -171,7 +171,7 @@ public class ReviewsAndBannersWorkflowTests
         {
             await using (var context = new AadhiDbContext(CreateSqliteOptions(dbPath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
             }
 
             Guid activeBannerId;

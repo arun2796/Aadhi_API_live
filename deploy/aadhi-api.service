@@ -1,0 +1,49 @@
+[Unit]
+Description=Aadhi Crackers API
+Documentation=https://github.com/arun2796/Aadhi_API_live
+# PostgreSQL runs on this same Lightsail instance, so the API must not start before it.
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+# "simple", not "notify": the app does not call sd_notify (no Microsoft.Extensions.Hosting.Systemd
+# reference), so notify would make systemd wait for a readiness signal that never arrives.
+# Readiness is verified by deploy-release.sh polling /health/ready instead.
+Type=simple
+User=aadhi
+Group=aadhi
+
+# "current" is a symlink flipped by deploy-release.sh. systemd resolves it at start,
+# so a restart always picks up whatever release the symlink points at.
+WorkingDirectory=/var/www/aadhi-api/current
+ExecStart=/var/www/aadhi-api/current/AadhiCrackers.Api
+
+# All configuration and every secret comes from this file. It is root-owned 0600 and
+# is NOT part of a release, so deploys never touch it.
+EnvironmentFile=/etc/aadhi-api/aadhi-api.env
+
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Logs go to the journal: journalctl -u aadhi-api -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aadhi-api
+
+# Hardening. The service only ever needs to read its own release directory and write logs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/www/aadhi-api
+
+[Install]
+WantedBy=multi-user.target

@@ -14,7 +14,7 @@ public class ValidationTests
     public void LoginValidator_WithValidEmailAndPassword_ShouldPass()
     {
         var validator = new LoginRequestValidator();
-        var request = new LoginRequest { Email = "test@aadhicrackers.com", Password = "Password@123" };
+        var request = new LoginRequest { Email = "test@aadhicracker.in", Password = "Password@123" };
         var result = validator.Validate(request);
         result.IsValid.Should().BeTrue();
     }

@@ -255,7 +255,7 @@ public class IdentityService : IIdentityService
             user = new ApplicationUser
             {
                 UserName = !string.IsNullOrWhiteSpace(email) ? email : phone,
-                Email = !string.IsNullOrWhiteSpace(email) ? email : $"{customerCode.ToLower()}@customer.aadhicrackers.com",
+                Email = !string.IsNullOrWhiteSpace(email) ? email : $"{customerCode.ToLower()}@customer.aadhicracker.in",
                 PhoneNumber = phone,
                 FirstName = firstName,
                 LastName = lastName,

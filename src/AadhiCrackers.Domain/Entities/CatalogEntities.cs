@@ -72,6 +72,13 @@ public class Product : AggregateRoot<Guid>
     public bool IsFeatured { get; set; }
     public bool IsBestSeller { get; set; }
     public bool IsNewArrival { get; set; }
+
+    /// <summary>
+    /// A pre-packed gift box sold as one sealed SKU. Unlike a combo it never lists the products
+    /// inside it, so a product may be a combo (has <see cref="ComboItems"/>) or a gift box, never
+    /// both — <c>CatalogService</c> rejects the combination on create/update.
+    /// </summary>
+    public bool IsGiftBox { get; set; }
     public string? SafetyInformation { get; set; }
     public Guid RowVersion { get; set; } = Guid.NewGuid();
 

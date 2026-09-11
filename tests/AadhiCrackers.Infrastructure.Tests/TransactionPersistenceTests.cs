@@ -22,7 +22,7 @@ public class TransactionPersistenceTests
         {
             await using (var context = new AadhiDbContext(CreateSqliteOptions(databasePath)))
             {
-                await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+                await context.Database.EnsureCreatedAsync();
                 await using var transaction = await context.BeginTransactionAsync();
 
                 context.Categories.Add(new Category { Name = "Rollback", Slug = "rollback", IsActive = true });
@@ -47,7 +47,7 @@ public class TransactionPersistenceTests
         try
         {
             await using var context = new AadhiDbContext(CreateSqliteOptions(databasePath));
-            await DatabaseInitializer.InitializeAsync(context, NullLogger.Instance);
+            await context.Database.EnsureCreatedAsync();
 
             var auditService = new AuditLogService(context, new TestCurrentUserService(), new OutboxService(context));
             await using var transaction = await context.BeginTransactionAsync();

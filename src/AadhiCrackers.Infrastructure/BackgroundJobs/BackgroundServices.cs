@@ -186,6 +186,21 @@ public class OutboxProcessorBackgroundService : BackgroundService
                             msg.ProcessedOnUtc = DateTime.UtcNow;
                             msg.Error = null;
                         }
+                        // An event type with no handler is not a transient failure. Retrying it five
+                        // times over a minute of exponential backoff cannot register a handler — only
+                        // a deploy can. Park it immediately, with an error that says what to do, and
+                        // do not waste attempts pretending otherwise.
+                        catch (NotSupportedException ex)
+                        {
+                            msg.Status = "DeadLetter";
+                            msg.RetryCount = 5;
+                            msg.NextAttemptAtUtc = null;
+                            msg.Error = ex.Message;
+                            _logger.LogError(ex,
+                                "Outbox message {Id} has no handler for type '{Type}'. Parked as DeadLetter without retrying. " +
+                                "Once a release adds the handler, replay it: POST /api/v1/admin/outbox/requeue with {{\"type\":\"{Type}\"}}.",
+                                msg.Id, msg.Type, msg.Type);
+                        }
                         catch (Exception ex)
                         {
                             msg.RetryCount++;
@@ -193,7 +208,11 @@ public class OutboxProcessorBackgroundService : BackgroundService
                             if (msg.RetryCount >= 5)
                             {
                                 msg.Status = "DeadLetter";
-                                _logger.LogError(ex, "Outbox message {Id} exceeded retry limit. Moved to DeadLetter.", msg.Id);
+                                msg.NextAttemptAtUtc = null;
+                                _logger.LogError(ex,
+                                    "Outbox message {Id} (type '{Type}') exceeded the retry limit and was moved to DeadLetter. " +
+                                    "It will NOT be retried again on its own — fix the cause, then replay it via POST /api/v1/admin/outbox/requeue.",
+                                    msg.Id, msg.Type);
                             }
                             else
                             {

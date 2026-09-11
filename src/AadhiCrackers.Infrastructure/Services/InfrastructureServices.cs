@@ -37,11 +37,20 @@ public class OutboxService : IOutboxService
     }
 }
 
+/// <summary>
+/// The default provider, and the only one used for local development: files go under
+/// wwwroot/storage and are served back by UseStaticFiles at /storage/...
+///
+/// NOT SUITABLE FOR PRODUCTION. Uploads land inside the deployed release directory, which the
+/// next deploy replaces, so they are gone. Production sets Storage:Provider=R2 (see
+/// <see cref="R2FileStorageService"/>); this class stays the default purely so a developer with no
+/// Cloudflare credentials can still run the whole upload flow end to end.
+/// </summary>
 public class LocalFileStorageService : IFileStorageService
 {
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".webp", ".pdf", ".gif"
+        ".jpg", ".jpeg", ".png", ".webp", ".avif", ".pdf", ".gif"
     };
 
     private readonly string _baseStoragePath;
@@ -52,6 +61,35 @@ public class LocalFileStorageService : IFileStorageService
         Directory.CreateDirectory(_baseStoragePath);
     }
 
+    /// <summary>
+    /// Mirrors <see cref="R2FileStorageService.SaveObjectAsync"/> so the upload endpoint behaves
+    /// identically under either provider. The content type is accepted and echoed back rather than
+    /// stored: on disk it is the extension that decides what UseStaticFiles serves, and the
+    /// extension here was itself derived from the sniffed content type.
+    /// </summary>
+    public async Task<StoredFileResult> SaveObjectAsync(
+        Stream fileStream,
+        string folder,
+        string contentType,
+        string extension,
+        CancellationToken cancellationToken = default)
+    {
+        var key = StorageKeyGenerator.NewKey(folder, extension);
+        var targetFolder = Path.Combine(_baseStoragePath, StorageKeyGenerator.SanitizeFolder(folder));
+        Directory.CreateDirectory(targetFolder);
+
+        var fullPath = Path.Combine(_baseStoragePath, key.Replace('/', Path.DirectorySeparatorChar));
+
+        long sizeBytes;
+        await using (var outputStream = new FileStream(fullPath, FileMode.Create))
+        {
+            await fileStream.CopyToAsync(outputStream, cancellationToken);
+            sizeBytes = outputStream.Length;
+        }
+
+        return new StoredFileResult($"/storage/{key}", key, contentType, sizeBytes);
+    }
+
     public async Task<string> SaveFileAsync(Stream fileStream, string fileName, string folder = "products", CancellationToken cancellationToken = default)
     {
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
@@ -60,23 +98,34 @@ public class LocalFileStorageService : IFileStorageService
             throw new ArgumentException($"File extension '{extension}' is not permitted. Allowed extensions: {string.Join(", ", AllowedExtensions)}");
         }
 
-        var targetFolder = Path.Combine(_baseStoragePath, folder);
-        Directory.CreateDirectory(targetFolder);
-
-        var uniqueFileName = $"{Guid.NewGuid():N}{extension}";
-        var fullPath = Path.Combine(targetFolder, uniqueFileName);
-
-        using (var outputStream = new FileStream(fullPath, FileMode.Create))
-        {
-            await fileStream.CopyToAsync(outputStream, cancellationToken);
-        }
-
-        return $"/storage/{folder}/{uniqueFileName}";
+        var result = await SaveObjectAsync(fileStream, folder, StorageContentTypes.FromExtension(extension), extension, cancellationToken);
+        return result.Url;
     }
 
+    /// <summary>
+    /// Accepts either the URL form ("/storage/products/ab12.png") or the bare key
+    /// ("products/ab12.png") that <see cref="SaveObjectAsync"/> returns, so callers holding either
+    /// value can delete. Resolution is confined to wwwroot: a traversing path deletes nothing.
+    /// </summary>
     public Task<bool> DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default)
     {
-        var fullPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", relativePath.TrimStart('/'));
+        var value = (relativePath ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        if (value.Length == 0) return Task.FromResult(false);
+
+        // A key produced by SaveObjectAsync is relative to the storage root, not to wwwroot.
+        if (!value.StartsWith("storage/", StringComparison.OrdinalIgnoreCase))
+        {
+            value = "storage/" + value;
+        }
+
+        var webRoot = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"));
+        var fullPath = Path.GetFullPath(Path.Combine(webRoot, value));
+
+        if (!fullPath.StartsWith(webRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(false);
+        }
+
         if (File.Exists(fullPath))
         {
             File.Delete(fullPath);
@@ -101,7 +150,7 @@ public class LocalFileStorageService : IFileStorageService
 /// the key already present and does nothing.
 ///
 /// GUEST ISOLATION. Every anonymous checkout is attached to one shared customer record
-/// (guest@aadhicrackers.com). Attributing a guest notification to that record would make it visible
+/// (guest@aadhicracker.in). Attributing a guest notification to that record would make it visible
 /// to every other guest through "my notifications", so a notification whose order belongs to the
 /// shared bucket is stored with CustomerId = NULL and is reachable only by its order number.
 /// Resolution fails closed: if the owning customer cannot be read, no owner is recorded.
@@ -472,6 +521,7 @@ public class SearchService : ISearchService
                 IsFeatured = p.IsFeatured,
                 IsBestSeller = p.IsBestSeller,
                 IsNewArrival = p.IsNewArrival,
+                IsGiftBox = p.IsGiftBox,
                 PrimaryImageUrl = p.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary) != null
                     ? p.Images.OrderBy(i => i.SortOrder).FirstOrDefault(i => i.IsPrimary)!.Url
                     : p.Images.OrderBy(i => i.SortOrder).FirstOrDefault() != null ? p.Images.OrderBy(i => i.SortOrder).FirstOrDefault()!.Url : null,

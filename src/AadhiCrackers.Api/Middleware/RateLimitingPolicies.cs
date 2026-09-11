@@ -21,6 +21,7 @@ public static class RateLimitingPolicies
     public const string Reports = "REPORTS";
     public const string AuditSearch = "AUDIT_SEARCH";
     public const string Notifications = "NOTIFICATIONS";
+    public const string AdminUpload = "ADMIN_UPLOAD";
 
     public static IServiceCollection AddAppRateLimiting(this IServiceCollection services)
     {
@@ -200,6 +201,20 @@ public static class RateLimitingPolicies
                     factory: _ => new FixedWindowRateLimiterOptions
                     {
                         PermitLimit = 60,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
+            // 12. ADMIN UPLOAD: 30 req / min - image uploads are the only endpoint that costs
+            // bandwidth and object-store writes rather than a database read, so they get a tighter
+            // bucket than the 120/min ADMIN_API allowance. It is still generous for the real job:
+            // 30 product photos a minute finishes a 180-product catalogue in six minutes.
+            options.AddPolicy(AdminUpload, httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: httpContext.User?.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anon",
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 30,
                         Window = TimeSpan.FromMinutes(1),
                         QueueLimit = 0
                     }));

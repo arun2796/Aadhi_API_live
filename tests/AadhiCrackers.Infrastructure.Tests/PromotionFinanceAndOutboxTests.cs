@@ -55,7 +55,7 @@ public class PromotionFinanceAndOutboxTests : IDisposable
     private sealed class TestCurrentUserService : ICurrentUserService
     {
         public string? UserId => Guid.NewGuid().ToString();
-        public string? Email => "customer@aadhicrackers.com";
+        public string? Email => "customer@aadhicracker.in";
         public string? UserName => "CustomerUser";
         public string? Role => "Customer";
         public string? IpAddress => "127.0.0.1";

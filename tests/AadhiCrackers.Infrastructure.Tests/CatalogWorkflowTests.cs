@@ -36,7 +36,7 @@ public class CatalogWorkflowTests : IDisposable
     private sealed class TestCurrentUserService : ICurrentUserService
     {
         public string? UserId => Guid.NewGuid().ToString();
-        public string? Email => "catalog.admin@aadhicrackers.com";
+        public string? Email => "catalog.admin@aadhicracker.in";
         public string? UserName => "catalogAdmin";
         public string? Role => "Admin";
         public string? IpAddress => "127.0.0.1";

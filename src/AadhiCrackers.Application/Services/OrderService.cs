@@ -1,3 +1,4 @@
+using AadhiCrackers.Application.Common;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Contracts.Common;
 using AadhiCrackers.Contracts.Orders;
@@ -56,40 +57,103 @@ public class OrderService : IOrderService
         _pricing = pricing ?? new OrderPricingService(context);
     }
 
-    private Task<string?> ProcessScreenshotBase64Async(string? base64Data, CancellationToken cancellationToken)
+    /// <summary>An 8 MB cap on the decoded bytes, matching the image upload endpoint.</summary>
+    private const int MaxScreenshotBytes = 8 * 1024 * 1024;
+
+    /// <summary>
+    /// Turns whatever the client sent as a payment proof into a URL worth storing.
+    ///
+    /// WHY THIS UPLOADS. The browser sends the screenshot as a base64 data URI. Writing that
+    /// string straight into Orders.PaymentScreenshotUrl — which is what used to happen — puts a
+    /// multi-hundred-kilobyte blob inside the order row, so every order list query, every admin
+    /// grid and every order DTO drags the image along with it. The bytes are decoded here,
+    /// validated, and uploaded to object storage; only the URL is persisted.
+    ///
+    /// Failure policy: bad input is the caller's problem and is rejected. Storage being
+    /// unreachable is NOT — an order that the customer has already paid for must not be lost
+    /// because R2 had a bad minute, so the proof falls back to the inline data URI.
+    /// </summary>
+    private async Task<string?> ProcessScreenshotBase64Async(string? base64Data, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(base64Data)) return Task.FromResult<string?>(null);
+        if (string.IsNullOrWhiteSpace(base64Data)) return null;
 
         var trimmed = base64Data.Trim();
-        // If it's an external HTTP/HTTPS URL (e.g. S3, Cloudinary), preserve it
+
+        // Already stored somewhere — a previous submission, or an admin pasting a link.
         if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            return Task.FromResult<string?>(trimmed);
+            return trimmed;
         }
 
-        if (trimmed.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+        // Accept both "data:image/png;base64,AAAA" and a bare base64 payload.
+        var payload = trimmed;
+        if (payload.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
-            return Task.FromResult<string?>(trimmed);
+            var commaIndex = payload.IndexOf(',');
+            if (commaIndex < 0)
+            {
+                throw new DomainException("The payment screenshot is malformed. Please attach it again.");
+            }
+            payload = payload[(commaIndex + 1)..];
         }
 
-        // If raw base64 string was passed without header, format as data URI
+        byte[] bytes;
         try
         {
-            var raw = trimmed;
-            if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            {
-                var commaIndex = raw.IndexOf(',');
-                if (commaIndex >= 0) raw = raw[(commaIndex + 1)..];
-            }
-            Convert.FromBase64String(raw.Trim());
-            return Task.FromResult<string?>($"data:image/jpeg;base64,{raw.Trim()}");
+            bytes = Convert.FromBase64String(payload.Trim());
         }
-        catch
+        catch (FormatException)
         {
-            return Task.FromResult<string?>(trimmed);
+            throw new DomainException("The payment screenshot could not be read. Please attach it again.");
+        }
+
+        if (bytes.Length == 0)
+        {
+            throw new DomainException("The payment screenshot is empty. Please attach it again.");
+        }
+
+        if (bytes.Length > MaxScreenshotBytes)
+        {
+            throw new DomainException(
+                $"The payment screenshot is {bytes.Length / (1024d * 1024d):0.#} MB, over the 8 MB limit. " +
+                "Please attach a smaller screenshot.");
+        }
+
+        // Sniff the real bytes: what the client claims in the data URI prefix is not evidence.
+        if (!ImageContentTypeSniffer.TrySniff(
+                bytes.AsSpan(0, Math.Min(bytes.Length, ImageContentTypeSniffer.RequiredHeaderBytes)),
+                out var contentType,
+                out var extension))
+        {
+            throw new DomainException(
+                $"The payment screenshot is not a {ImageContentTypeSniffer.AllowedFormatsDescription} image.");
+        }
+
+        // No storage provider wired up (unit tests construct the service directly): keep the old
+        // inline behaviour rather than dropping the proof on the floor.
+        if (_fileStorage is null)
+        {
+            return $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+        }
+
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            var stored = await _fileStorage.SaveObjectAsync(
+                stream, PaymentProofFolder, contentType, extension, cancellationToken);
+            return stored.Url;
+        }
+        catch (FileStorageException)
+        {
+            // Storage is down. The order matters more than where the proof lives, so keep the
+            // image inline and let the order go through; it can be migrated out later.
+            return $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
         }
     }
+
+    /// <summary>Object-storage folder for payment proofs (an allowed folder in UploadsController).</summary>
+    private const string PaymentProofFolder = "payment-proofs";
 
     public async Task<OrderDto> CreateOrderAsync(CreateOrderRequest request, CancellationToken cancellationToken = default)
     {
@@ -140,15 +204,14 @@ public class OrderService : IOrderService
         var orderNumber = await _numberGenerator.GenerateOrderNumberAsync(cancellationToken);
         var deliveryMethod = NormalizeDeliveryMethod(request.DeliveryMethod);
 
-        string? screenshotUrl = request.PaymentScreenshotUrl;
-        if (!string.IsNullOrWhiteSpace(request.PaymentScreenshotBase64))
-        {
-            screenshotUrl = await ProcessScreenshotBase64Async(request.PaymentScreenshotBase64, cancellationToken);
-        }
-        else if (!string.IsNullOrWhiteSpace(screenshotUrl) && screenshotUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-        {
-            screenshotUrl = await ProcessScreenshotBase64Async(screenshotUrl, cancellationToken);
-        }
+        // Either field may carry the proof. Everything goes through the same path: it uploads
+        // base64 to object storage and passes an existing http(s) URL through untouched, so there
+        // is no route by which raw image bytes can reach the Orders row.
+        var screenshotUrl = await ProcessScreenshotBase64Async(
+            !string.IsNullOrWhiteSpace(request.PaymentScreenshotBase64)
+                ? request.PaymentScreenshotBase64
+                : request.PaymentScreenshotUrl,
+            cancellationToken);
 
         var order = new Order
         {

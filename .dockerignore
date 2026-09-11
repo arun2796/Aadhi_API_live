@@ -1,8 +1,0 @@
-**/bin/
-**/obj/
-**/logs/
-**/*.db
-**/*.db-shm
-**/*.db-wal
-.git/
-.vs/

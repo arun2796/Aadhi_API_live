@@ -142,7 +142,7 @@ public class CustomerService : ICustomerService
             LastName = lastName,
             // Email column has a unique index and is non-nullable — synthesize a placeholder
             // (same convention as the Firebase auto-provision flow) when none is provided.
-            Email = !string.IsNullOrWhiteSpace(email) ? email : $"{customerCode.ToLower()}@customer.aadhicrackers.com",
+            Email = !string.IsNullOrWhiteSpace(email) ? email : $"{customerCode.ToLower()}@customer.aadhicracker.in",
             Phone = phone,
             IsActive = true
         };

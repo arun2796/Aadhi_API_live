@@ -2,6 +2,7 @@ using System.Text;
 using AadhiCrackers.Application.Common.Interfaces;
 using AadhiCrackers.Domain.Entities;
 using AadhiCrackers.Infrastructure.BackgroundJobs;
+using AadhiCrackers.Infrastructure.Configuration;
 using AadhiCrackers.Infrastructure.Identity;
 using AadhiCrackers.Infrastructure.Persistence;
 using AadhiCrackers.Infrastructure.Services;
@@ -18,34 +19,30 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructureServices(this IServiceCollection services, IConfiguration configuration)
     {
+        // PostgreSQL is the only supported provider. There is deliberately no fallback: a missing
+        // connection string fails at startup naming the key, rather than silently starting against
+        // some throwaway local database that would accept writes and then lose them.
         var connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? configuration.GetConnectionString("PostgreSqlConnection")
-            ?? "Data Source=aadhicrackers.db";
+            ?? configuration.GetConnectionString("PostgreSqlConnection");
 
-        // DatabaseProvider selects the EF provider: "PostgreSql" / "Postgres" / "PostgreSQL"
-        // (case-insensitive) -> Npgsql; anything else (default) -> SQLite for local dev.
-        var provider = configuration["DatabaseProvider"] ?? "Sqlite";
-        var usePostgres = provider.Equals("PostgreSql", StringComparison.OrdinalIgnoreCase)
-            || provider.Equals("Postgres", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "No database connection string. Set ConnectionStrings:DefaultConnection " +
+                "(env ConnectionStrings__DefaultConnection) to the PostgreSQL connection string, e.g. " +
+                "'Host=localhost;Port=5432;Database=aadhicrackers;Username=aadhi;Password=...' or a " +
+                "'postgresql://user:password@host:5432/aadhicrackers' URI.");
+        }
 
         services.AddDbContext<AadhiDbContext>(options =>
         {
-            if (usePostgres)
-            {
-                // Multi-provider migrations use EF's supported one-migrations-assembly-per-provider
-                // pattern (https://learn.microsoft.com/ef/core/managing-schemas/migrations/providers):
-                //   - SQLite   -> historical set in this assembly (Persistence/Migrations)
-                //   - Postgres -> AadhiCrackers.Infrastructure.MigrationsPostgres (separate project)
-                // The connection string may be a postgres(ql):// URI (Neon/Heroku style); Npgsql
-                // only accepts keyword form, so it is normalized first.
-                options.UseNpgsql(
-                    PostgresConnectionStringHelper.Normalize(connectionString),
-                    b => b.MigrationsAssembly("AadhiCrackers.Infrastructure.MigrationsPostgres"));
-            }
-            else
-            {
-                options.UseSqlite(connectionString, b => b.MigrationsAssembly(typeof(AadhiDbContext).Assembly.FullName));
-            }
+            // Migrations live in their own project (AadhiCrackers.Infrastructure.MigrationsPostgres)
+            // so the schema history is versioned separately from the runtime model.
+            // Keyword form ("Host=...;Port=...") is what the server uses, but a postgres(ql)://
+            // URI is also accepted; Npgsql only understands keyword form, so it is normalized first.
+            options.UseNpgsql(
+                PostgresConnectionStringHelper.Normalize(connectionString),
+                b => b.MigrationsAssembly("AadhiCrackers.Infrastructure.MigrationsPostgres"));
         });
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<AadhiDbContext>());
@@ -117,7 +114,7 @@ public static class DependencyInjection
 
         // Infrastructure Services
         services.AddScoped<IIdentityService, IdentityService>();
-        services.AddSingleton<IFileStorageService, LocalFileStorageService>();
+        services.AddFileStorage(configuration);
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISearchService, SearchService>();
         services.AddScoped<IOutboxService, OutboxService>();
@@ -126,6 +123,36 @@ public static class DependencyInjection
         // Background Workers
         services.AddHostedService<OutboxProcessorBackgroundService>();
         services.AddHostedService<LowStockMonitorBackgroundService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Picks the file storage provider from configuration.
+    ///
+    /// Storage:Provider (env Storage__Provider) selects it: "R2" -> Cloudflare R2, anything else
+    /// unset or "Local" -> the historical local-disk provider, so an existing deployment that
+    /// never sets the key keeps working exactly as before.
+    ///
+    /// WHY THIS THROWS. When the provider is R2 and any of the five R2 keys is missing, startup
+    /// aborts with the key names in the message. Falling back to local disk would be far worse
+    /// than crashing: each deploy replaces the release directory on the server, so the shop
+    /// would upload 180 product images, see them work, and find them all broken the next morning
+    /// with nothing in the logs to explain it.
+    /// </summary>
+    public static IServiceCollection AddFileStorage(this IServiceCollection services, IConfiguration configuration)
+    {
+        var storageOptions = StorageOptionsValidator.BindAndValidate(configuration);
+        services.AddSingleton(storageOptions);
+
+        if (storageOptions.UsesR2)
+        {
+            services.AddSingleton<IFileStorageService, R2FileStorageService>();
+        }
+        else
+        {
+            services.AddSingleton<IFileStorageService, LocalFileStorageService>();
+        }
 
         return services;
     }

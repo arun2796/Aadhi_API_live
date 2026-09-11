@@ -19,7 +19,14 @@ bld/
 *.userosscache
 *.sln.docstates
 
-## Database files
+## Local secrets — real credentials live here and must never be committed.
+## appsettings.Development.json.example is the committed template.
+src/AadhiCrackers.Api/appsettings.Development.json
+src/AadhiCrackers.Api/appsettings.Local.json
+*.env
+!*.env.example
+
+## Stray database files (the app is PostgreSQL-only; these should never reappear)
 *.db
 *.db-shm
 *.db-wal
@@ -42,3 +49,8 @@ Thumbs.db
 *.bak
 *.bak-*
 *.db.bak*
+
+# Local file-storage provider output (Storage:Provider=Local writes here).
+# Development scratch only — production uses Cloudflare R2 — and it fills up with
+# uploaded product photos, which must never land in the repository.
+src/AadhiCrackers.Api/wwwroot/storage/

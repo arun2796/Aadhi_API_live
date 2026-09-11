@@ -47,11 +47,15 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
     {
     }
 
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        base.OnConfiguring(optionsBuilder);
-        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
-    }
+    // PendingModelChangesWarning used to be suppressed here. It is EF's only guard against the
+    // exact failure it is named for: an entity gains a property, no migration is added, and the
+    // column the app now writes to does not exist in the database. Suppressed, that surfaces in
+    // production as a query-time error on a column nobody knew was missing.
+    //
+    // It is left at its default (throw on Migrate) deliberately. CI runs
+    // `dotnet ef migrations has-pending-model-changes` so drift is caught on a branch, and if one
+    // ever reaches the server the release fails its health check and deploy-release.sh rolls back
+    // to the previous one — a failed deploy instead of a silently broken schema.
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -73,6 +77,9 @@ public class AadhiDbContext : IdentityDbContext<ApplicationUser, ApplicationRole
             b.HasIndex(p => p.IsActive);
             b.HasIndex(p => p.IsFeatured);
             b.HasIndex(p => p.IsBestSeller);
+            // Backs GET /products/gift-boxes and the excludeGiftBoxes filter, the same way the
+            // IsFeatured / IsBestSeller indexes back their storefront sections.
+            b.HasIndex(p => p.IsGiftBox);
 
             b.Property(p => p.SKU).IsRequired().HasMaxLength(50);
             b.Property(p => p.Name).IsRequired().HasMaxLength(150);
