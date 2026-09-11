@@ -296,7 +296,12 @@ jobs:
 
       - name: Upload release
         run: |
-          RELEASE_ID="${{ github.sha }}"
+          # sha PLUS run id — not sha alone. After a deploy, the release directory is chowned
+          # to the service account and the running app writes logs into it; a RE-RUN of the same
+          # commit would rsync into that same directory as the deploy user and die with several
+          # hundred "Permission denied" errors. A unique id per run makes every deploy a fresh
+          # directory, and the activate script prunes old ones (keeping 5) with sudo.
+          RELEASE_ID="${{ github.sha }}-run${{ github.run_id }}-${{ github.run_attempt }}"
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
 
           ssh -i ~/.ssh/deploy_key "$TARGET_USER@$TARGET_HOST" "mkdir -p ${{ env.APP_ROOT }}/releases/$RELEASE_ID"
