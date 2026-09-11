@@ -255,10 +255,42 @@ jobs:
             exit 1
           fi
 
-          # rsync writes straight into the releases directory; provision-lightsail.sh grants
-          # this through group membership, which only takes effect after a fresh login.
-          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$TARGET_USER@$TARGET_HOST" "test -w ${{ env.APP_ROOT }}/releases"; then
-            echo "::error::$TARGET_USER cannot write to ${{ env.APP_ROOT }}/releases. Run provision-lightsail.sh, then log out and back in once so the 'aadhi' group membership applies."
+          # rsync writes straight into the releases directory. "Cannot write" has three quite
+          # different causes with three different fixes, so each is checked separately instead of
+          # inferring them all from one failed `test -w` — guessing wrong costs a full round trip
+          # through CI every time.
+          APP_ROOT='${{ env.APP_ROOT }}'
+          remote() { ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$TARGET_USER@$TARGET_HOST" "$@"; }
+
+          if ! remote "test -d '$APP_ROOT'"; then
+            echo "::error::$APP_ROOT does not exist on the server — it has not been provisioned yet."
+            echo "This deploy only ships the application; the instance still needs its service account,"
+            echo "systemd unit, nginx, database and environment file. Run ONCE on the instance:"
+            echo ""
+            echo "  ssh ubuntu@<static-ip>"
+            echo "  git clone https://github.com/arun2796/Aadhi_API_live.git /tmp/aadhi"
+            echo "  sudo bash /tmp/aadhi/deploy/provision-lightsail.sh"
+            echo ""
+            echo "Then fill in /etc/aadhi-api/aadhi-api.env before re-running this workflow."
+            echo "Full walkthrough: DEPLOYMENT.md section 2."
+            exit 1
+          fi
+
+          if ! remote "test -d '$APP_ROOT/releases'"; then
+            echo "::error::$APP_ROOT exists but $APP_ROOT/releases does not — provisioning did not finish."
+            echo "Re-run it; the script is idempotent and will not touch your database or env file:"
+            echo "  sudo bash /tmp/aadhi/deploy/provision-lightsail.sh"
+            exit 1
+          fi
+
+          if ! remote "test -w '$APP_ROOT/releases'"; then
+            echo "::error::The deploy user cannot write to $APP_ROOT/releases. Server state:"
+            remote "echo '  groups: '\$(id -nG); echo '  releases dir: '\$(stat -c '%U:%G %a' '$APP_ROOT/releases')" || true
+            echo ""
+            echo "Expected: the deploy user in the 'aadhi' group, and the directory owned by"
+            echo "aadhi:aadhi with mode 775. provision-lightsail.sh sets both up; if the group is"
+            echo "missing above, re-run it. To fix by hand:"
+            echo "  sudo usermod -aG aadhi \$(whoami) && sudo chmod 0775 $APP_ROOT $APP_ROOT/releases"
             exit 1
           fi
 
