@@ -50,6 +50,51 @@ jobs:
             exit 1
           fi
 
+          # Whitespace inside LIGHTSAIL_USER / LIGHTSAIL_HOST is the single most common way this
+          # deploy breaks, because pasting into the GitHub secret box picks up a trailing newline
+          # that is invisible in the UI. ssh then fails with "remote username contains invalid
+          # characters", and because Actions masks secret values the error prints as
+          # "Cannot SSH to ***\n@***" — which tells you nothing.
+          #
+          # Checked HERE rather than at the ssh step so it costs five seconds instead of a full
+          # build, and reported by SHAPE (length, what was found) because the values themselves
+          # are masked and cannot be echoed usefully.
+          clean_user="$(printf '%s' "$LIGHTSAIL_USER" | tr -d '[:space:]')"
+          clean_host="$(printf '%s' "$LIGHTSAIL_HOST" | tr -d '[:space:]')"
+
+          if [ "${#clean_user}" -ne "${#LIGHTSAIL_USER}" ]; then
+            echo "::error::LIGHTSAIL_USER contains whitespace (${#LIGHTSAIL_USER} characters, ${#clean_user} once stripped) — almost certainly a trailing newline from pasting. Re-enter the secret as exactly 'ubuntu' with no line break."
+            exit 1
+          fi
+          if [ "${#clean_host}" -ne "${#LIGHTSAIL_HOST}" ]; then
+            echo "::error::LIGHTSAIL_HOST contains whitespace (${#LIGHTSAIL_HOST} characters, ${#clean_host} once stripped) — almost certainly a trailing newline from pasting. Re-enter it as just the IP or hostname."
+            exit 1
+          fi
+
+          # A Unix login name: lowercase start, then letters/digits/_/-. Catches an email address
+          # ('you@gmail.com'), a full ssh target ('ubuntu@1.2.3.4') or a stray quote.
+          case "$clean_user" in
+            [a-z_]*) ;;
+            *) echo "::error::LIGHTSAIL_USER does not look like a Linux username. On the Ubuntu Lightsail blueprint it is 'ubuntu' — just the name, not 'ubuntu@<ip>' and not an email address."; exit 1 ;;
+          esac
+          if printf '%s' "$clean_user" | grep -qv '^[a-z_][a-z0-9_-]*$'; then
+            echo "::error::LIGHTSAIL_USER contains characters that are not valid in a Linux username. It should be 'ubuntu'."
+            exit 1
+          fi
+
+          # A bare host, not a URL: 'api.aadhicracker.in' or '13.234.56.78', never 'https://…'.
+          case "$clean_host" in
+            http://*|https://*)
+              echo "::error::LIGHTSAIL_HOST is a URL. ssh needs a bare hostname or IP — use 'api.aadhicracker.in', not 'https://api.aadhicracker.in'."
+              exit 1 ;;
+            */*)
+              echo "::error::LIGHTSAIL_HOST contains a '/'. It must be just the hostname or IP, with no path."
+              exit 1 ;;
+            *@*)
+              echo "::error::LIGHTSAIL_HOST contains '@'. Put the username in LIGHTSAIL_USER and only the host here."
+              exit 1 ;;
+          esac
+
           # A key pasted through a form often loses its trailing newline or arrives as a
           # PuTTY .ppk. Both produce "libcrypto: error" from ssh, which names nothing useful.
           case "$LIGHTSAIL_SSH_KEY" in
@@ -183,8 +228,18 @@ jobs:
 
       - name: Verify the connection
         run: |
-          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=15 "$TARGET_USER@$TARGET_HOST" 'echo connected as $(whoami)'; then
-            echo "::error::Cannot SSH to $TARGET_USER@$TARGET_HOST. Check the public half of LIGHTSAIL_SSH_KEY is in ~$TARGET_USER/.ssh/authorized_keys on the instance."
+          # The error deliberately avoids printing the target: Actions masks secret values, so
+          # "Cannot SSH to $TARGET_USER@$TARGET_HOST" renders as "Cannot SSH to ***@***" and
+          # helps nobody. ssh's own stderr is shown instead, which names the real cause
+          # (permission denied / connection refused / timeout), and the guidance below is the
+          # checklist for each of those.
+          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=15 \
+                 "$TARGET_USER@$TARGET_HOST" 'echo "connected to $(hostname) as $(whoami)"'; then
+            echo "::error::SSH to the Lightsail instance failed — ssh's own message above says which of these it is:"
+            echo "  • 'Permission denied (publickey)'  -> the PUBLIC half of LIGHTSAIL_SSH_KEY is not in ~/.ssh/authorized_keys for that user on the instance. Run: ssh-copy-id -i deploy_key.pub ubuntu@<static-ip>"
+            echo "  • 'Connection timed out'           -> port 22 is closed in the Lightsail console firewall, or the instance is stopped."
+            echo "  • 'Connection refused'             -> the instance is up but sshd is not listening."
+            echo "  • 'invalid format' / libcrypto     -> LIGHTSAIL_SSH_KEY is not a complete OpenSSH private key (BEGIN/END lines included, not the .pub file)."
             exit 1
           fi
 

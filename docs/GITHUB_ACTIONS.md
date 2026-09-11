@@ -125,6 +125,9 @@ bash /tmp/deploy-release.sh <older-sha>
 |---|---|
 | preflight → *Missing repository secret* | Add it in the Secrets tab. The message names it exactly. |
 | preflight → *does not look like an OpenSSH private key* | You pasted the `.pub` file, or a PuTTY `.ppk`. See above. |
+| preflight → *contains whitespace … almost certainly a trailing newline* | Pasting into the GitHub secret box picks up a trailing newline that is invisible in the UI. Re-enter the value with no line break. Left unchecked this surfaces much later as ssh's `remote username contains invalid characters`, printed as `Cannot SSH to ***@***` because Actions masks the value. |
+| preflight → *does not look like a Linux username* | `LIGHTSAIL_USER` must be just `ubuntu` — not `ubuntu@<ip>`, not an email address. |
+| preflight → *LIGHTSAIL_HOST is a URL* | ssh needs a bare host: `api.aadhicracker.in` or the static IP, never `https://…`. |
 | deploy → *ssh-keyscan got no host key* | `LIGHTSAIL_HOST` is wrong or unreachable; port 22 closed in the Lightsail firewall; instance stopped. |
 | deploy → *Cannot SSH* | The public half of the key is not in `~ubuntu/.ssh/authorized_keys`. |
 | deploy → *cannot write to …/releases* | Run `provision-lightsail.sh`, then log out and back in once so the `aadhi` group membership takes effect. |
