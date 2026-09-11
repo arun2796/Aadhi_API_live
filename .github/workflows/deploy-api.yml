@@ -50,50 +50,62 @@ jobs:
             exit 1
           fi
 
-          # Whitespace inside LIGHTSAIL_USER / LIGHTSAIL_HOST is the single most common way this
-          # deploy breaks, because pasting into the GitHub secret box picks up a trailing newline
-          # that is invisible in the UI. ssh then fails with "remote username contains invalid
-          # characters", and because Actions masks secret values the error prints as
-          # "Cannot SSH to ***\n@***" — which tells you nothing.
+          # ── Normalise, do not nitpick ──────────────────────────────────────────────
+          # Pasting into the GitHub secret box picks up a trailing newline that is invisible in
+          # the UI. Left alone it surfaces much later as ssh's "remote username contains invalid
+          # characters", printed as "Cannot SSH to ***\n@***" because Actions masks the value —
+          # an error that names nothing useful.
           #
-          # Checked HERE rather than at the ssh step so it costs five seconds instead of a full
-          # build, and reported by SHAPE (length, what was found) because the values themselves
-          # are masked and cannot be echoed usefully.
+          # A trailing newline has exactly one sensible interpretation, so this STRIPS it and
+          # warns rather than failing: refusing to deploy over a stray whitespace character the
+          # very next step already removes would be pedantry, not safety. Only values that stay
+          # unusable after normalising are fatal.
+          #
+          # Reported by SHAPE (character counts) because the values are masked and cannot be
+          # echoed back usefully.
           clean_user="$(printf '%s' "$LIGHTSAIL_USER" | tr -d '[:space:]')"
           clean_host="$(printf '%s' "$LIGHTSAIL_HOST" | tr -d '[:space:]')"
 
           if [ "${#clean_user}" -ne "${#LIGHTSAIL_USER}" ]; then
-            echo "::error::LIGHTSAIL_USER contains whitespace (${#LIGHTSAIL_USER} characters, ${#clean_user} once stripped) — almost certainly a trailing newline from pasting. Re-enter the secret as exactly 'ubuntu' with no line break."
-            exit 1
+            echo "::warning::LIGHTSAIL_USER had whitespace (${#LIGHTSAIL_USER} characters, ${#clean_user} once stripped) — almost certainly a trailing newline from pasting. Using the stripped value. Worth re-entering the secret cleanly."
           fi
           if [ "${#clean_host}" -ne "${#LIGHTSAIL_HOST}" ]; then
-            echo "::error::LIGHTSAIL_HOST contains whitespace (${#LIGHTSAIL_HOST} characters, ${#clean_host} once stripped) — almost certainly a trailing newline from pasting. Re-enter it as just the IP or hostname."
-            exit 1
+            echo "::warning::LIGHTSAIL_HOST had whitespace (${#LIGHTSAIL_HOST} characters, ${#clean_host} once stripped) — almost certainly a trailing newline from pasting. Using the stripped value. Worth re-entering the secret cleanly."
           fi
 
-          # A Unix login name: lowercase start, then letters/digits/_/-. Catches an email address
-          # ('you@gmail.com'), a full ssh target ('ubuntu@1.2.3.4') or a stray quote.
-          case "$clean_user" in
-            [a-z_]*) ;;
-            *) echo "::error::LIGHTSAIL_USER does not look like a Linux username. On the Ubuntu Lightsail blueprint it is 'ubuntu' — just the name, not 'ubuntu@<ip>' and not an email address."; exit 1 ;;
-          esac
-          if printf '%s' "$clean_user" | grep -qv '^[a-z_][a-z0-9_-]*$'; then
-            echo "::error::LIGHTSAIL_USER contains characters that are not valid in a Linux username. It should be 'ubuntu'."
-            exit 1
-          fi
-
-          # A bare host, not a URL: 'api.aadhicracker.in' or '13.234.56.78', never 'https://…'.
+          # A URL where a host belongs is also unambiguous: take the hostname out of it.
           case "$clean_host" in
             http://*|https://*)
-              echo "::error::LIGHTSAIL_HOST is a URL. ssh needs a bare hostname or IP — use 'api.aadhicracker.in', not 'https://api.aadhicracker.in'."
-              exit 1 ;;
-            */*)
-              echo "::error::LIGHTSAIL_HOST contains a '/'. It must be just the hostname or IP, with no path."
-              exit 1 ;;
-            *@*)
-              echo "::error::LIGHTSAIL_HOST contains '@'. Put the username in LIGHTSAIL_USER and only the host here."
-              exit 1 ;;
+              clean_host="${clean_host#*://}"
+              clean_host="${clean_host%%/*}"
+              echo "::warning::LIGHTSAIL_HOST looked like a URL. ssh needs a bare host, so the scheme and path were dropped. Worth re-entering it as just the IP or hostname." ;;
           esac
+          clean_host="${clean_host%%/*}"
+
+          # "ubuntu@1.2.3.4" in the USER field: the username is the part before the @.
+          case "$clean_user" in
+            *@*)
+              clean_user="${clean_user%%@*}"
+              echo "::warning::LIGHTSAIL_USER contained '@' — took the part before it as the username. Put only the login name in this secret." ;;
+          esac
+
+          # ── Fatal only when normalising cannot save it ─────────────────────────────
+          if [ -z "$clean_user" ] || [ -z "$clean_host" ]; then
+            echo "::error::LIGHTSAIL_USER or LIGHTSAIL_HOST is empty once whitespace is removed."
+            exit 1
+          fi
+
+          # A host with an '@' left in it is genuinely ambiguous — which half is the host?
+          case "$clean_host" in
+            *@*) echo "::error::LIGHTSAIL_HOST still contains '@' after normalising. Put the username in LIGHTSAIL_USER and only the hostname or IP here."; exit 1 ;;
+          esac
+
+          # A Linux login name: lowercase start, then letters/digits/_/-. Anything else (an email
+          # address, a stray quote) cannot be guessed at safely.
+          if printf '%s' "$clean_user" | grep -qv '^[a-z_][a-z0-9_-]*$'; then
+            echo "::error::LIGHTSAIL_USER is not a valid Linux username. On the Ubuntu Lightsail blueprint it is 'ubuntu'."
+            exit 1
+          fi
 
           # A key pasted through a form often loses its trailing newline or arrives as a
           # PuTTY .ppk. Both produce "libcrypto: error" from ssh, which names nothing useful.
@@ -107,7 +119,7 @@ jobs:
               exit 1 ;;
           esac
 
-          echo "All required secrets are present."
+          echo "Configuration is usable. Connecting as a ${#clean_user}-character user to a ${#clean_host}-character host."
 
       - name: Report optional variables
         env:
