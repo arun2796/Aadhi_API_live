@@ -160,56 +160,55 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
           HOST: ${{ secrets.LIGHTSAIL_HOST }}
+          USER: ${{ secrets.LIGHTSAIL_USER }}
         run: |
+          # Sanitize username and host (strip CRLF, spaces, quotes, email domains)
+          TARGET_USER=$(echo "$USER" | tr -d '\r\n\t "' | sed 's/@.*//')
+          TARGET_USER="${TARGET_USER:-ubuntu}"
+          TARGET_HOST=$(echo "$HOST" | tr -d '\r\n\t "' | sed -E 's|^https?://||; s|/.*||')
+          echo "TARGET_USER=$TARGET_USER" >> "$GITHUB_ENV"
+          echo "TARGET_HOST=$TARGET_HOST" >> "$GITHUB_ENV"
+
           install -d -m 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
           # Pin the host key on first use, so the deploy fails loudly if the host identity
           # ever changes rather than silently trusting a different machine.
-          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -T 15 -H "$TARGET_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
           if ! grep -q . ~/.ssh/known_hosts 2>/dev/null; then
-            echo "::error::ssh-keyscan got no host key from '$HOST'. Check LIGHTSAIL_HOST resolves, that port 22 is open in the Lightsail console firewall, and that the instance is running."
+            echo "::error::ssh-keyscan got no host key from '$TARGET_HOST'. Check LIGHTSAIL_HOST resolves, that port 22 is open in the Lightsail console firewall, and that the instance is running."
             exit 1
           fi
 
       - name: Verify the connection
-        env:
-          HOST: ${{ secrets.LIGHTSAIL_HOST }}
-          USER: ${{ secrets.LIGHTSAIL_USER }}
         run: |
-          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=15 "$USER@$HOST" 'echo connected as $(whoami)'; then
-            echo "::error::Cannot SSH to $USER@$HOST. Check the public half of LIGHTSAIL_SSH_KEY is in ~$USER/.ssh/authorized_keys on the instance."
+          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=15 "$TARGET_USER@$TARGET_HOST" 'echo connected as $(whoami)'; then
+            echo "::error::Cannot SSH to $TARGET_USER@$TARGET_HOST. Check the public half of LIGHTSAIL_SSH_KEY is in ~$TARGET_USER/.ssh/authorized_keys on the instance."
             exit 1
           fi
 
           # rsync writes straight into the releases directory; provision-lightsail.sh grants
           # this through group membership, which only takes effect after a fresh login.
-          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$USER@$HOST" "test -w ${{ env.APP_ROOT }}/releases"; then
-            echo "::error::$USER cannot write to ${{ env.APP_ROOT }}/releases. Run provision-lightsail.sh, then log out and back in once so the 'aadhi' group membership applies."
+          if ! ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$TARGET_USER@$TARGET_HOST" "test -w ${{ env.APP_ROOT }}/releases"; then
+            echo "::error::$TARGET_USER cannot write to ${{ env.APP_ROOT }}/releases. Run provision-lightsail.sh, then log out and back in once so the 'aadhi' group membership applies."
             exit 1
           fi
 
       - name: Upload release
-        env:
-          HOST: ${{ secrets.LIGHTSAIL_HOST }}
-          USER: ${{ secrets.LIGHTSAIL_USER }}
         run: |
           RELEASE_ID="${{ github.sha }}"
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
 
-          ssh -i ~/.ssh/deploy_key "$USER@$HOST" "mkdir -p ${{ env.APP_ROOT }}/releases/$RELEASE_ID"
+          ssh -i ~/.ssh/deploy_key "$TARGET_USER@$TARGET_HOST" "mkdir -p ${{ env.APP_ROOT }}/releases/$RELEASE_ID"
           rsync -az --delete --info=stats1 \
             -e "ssh -i ~/.ssh/deploy_key" \
-            publish/ "$USER@$HOST:${{ env.APP_ROOT }}/releases/$RELEASE_ID/"
+            publish/ "$TARGET_USER@$TARGET_HOST:${{ env.APP_ROOT }}/releases/$RELEASE_ID/"
 
       - name: Activate release
-        env:
-          HOST: ${{ secrets.LIGHTSAIL_HOST }}
-          USER: ${{ secrets.LIGHTSAIL_USER }}
         run: |
-          scp -i ~/.ssh/deploy_key deploy/deploy-release.sh "$USER@$HOST:/tmp/deploy-release.sh"
-          ssh -i ~/.ssh/deploy_key "$USER@$HOST" "bash /tmp/deploy-release.sh '${RELEASE_ID}'"
+          scp -i ~/.ssh/deploy_key deploy/deploy-release.sh "$TARGET_USER@$TARGET_HOST:/tmp/deploy-release.sh"
+          ssh -i ~/.ssh/deploy_key "$TARGET_USER@$TARGET_HOST" "bash /tmp/deploy-release.sh '${RELEASE_ID}'"
 
       # deploy-release.sh already health-checks on the server and rolls back on failure.
       # This confirms the same release is reachable from OUTSIDE — through DNS, the Lightsail
