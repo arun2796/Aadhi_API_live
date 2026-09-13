@@ -552,6 +552,7 @@ public class SettingsController : ControllerBase
 
     [HttpGet("public")]
     [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<ActionResult<ApiResponse<Dictionary<string, string>>>> GetPublicSettings(CancellationToken cancellationToken)
     {
         var settings = await _settingsService.GetPublicSettingsAsync(cancellationToken);
