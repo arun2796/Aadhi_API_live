@@ -200,6 +200,25 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<bool>.Ok(true, "Password changed successfully", _currentUser.CorrelationId));
     }
 
+    public record VerifyPasswordRequest(string Password);
+
+    [HttpPost("verify-password")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<bool>>> VerifyPassword([FromBody] VerifyPasswordRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+            return Unauthorized(ApiResponse<bool>.Fail("Not authenticated", _currentUser.CorrelationId));
+
+        if (string.IsNullOrWhiteSpace(request?.Password))
+            return BadRequest(ApiResponse<bool>.Fail("Password is required", _currentUser.CorrelationId));
+
+        var isValid = await _identityService.VerifyPasswordAsync(_currentUser.UserId, request.Password, cancellationToken);
+        if (!isValid)
+            return BadRequest(ApiResponse<bool>.Fail("Invalid password", _currentUser.CorrelationId));
+
+        return Ok(ApiResponse<bool>.Ok(true, "Password verified successfully", _currentUser.CorrelationId));
+    }
+
     [HttpPost("users")]
     [Authorize(Policy = "RequireAdmin")]
     [EnableRateLimiting(RateLimitingPolicies.AdminApi)]

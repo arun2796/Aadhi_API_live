@@ -531,6 +531,15 @@ public class IdentityService : IIdentityService
         return result.Succeeded;
     }
 
+    public async Task<bool> VerifyPasswordAsync(string userId, string password, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null || !user.IsActive) return false;
+
+        var result = await _signInManager.CheckPasswordSignInAsync(user, password, lockoutOnFailure: false);
+        return result.Succeeded;
+    }
+
     public async Task<UserDto?> GetUserByIdAsync(string userId, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByIdAsync(userId);

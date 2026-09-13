@@ -58,6 +58,7 @@ public interface IIdentityService
     Task<AuthResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
     Task<AuthResponse> CreateStaffUserAsync(CreateStaffUserRequest request, CancellationToken cancellationToken = default);
     Task<bool> ChangePasswordAsync(string userId, ChangePasswordRequest request, CancellationToken cancellationToken = default);
+    Task<bool> VerifyPasswordAsync(string userId, string password, CancellationToken cancellationToken = default);
     Task<UserDto?> GetUserByIdAsync(string userId, CancellationToken cancellationToken = default);
     Task<AuthResponse> UpdateProfileAsync(string userId, UpdateProfileRequest request, CancellationToken cancellationToken = default);
     Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default);
