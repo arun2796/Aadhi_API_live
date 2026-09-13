@@ -8,6 +8,7 @@ using AadhiCrackers.Infrastructure.Configuration;
 using AadhiCrackers.Infrastructure.Identity;
 using AadhiCrackers.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.OpenApi.Models;
 using Serilog;
@@ -229,6 +230,14 @@ using (var scope = app.Services.CreateScope())
 }
 
 // 9. HTTP Middleware Pipeline
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeadersOptions.KnownIPNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
 app.UseExceptionHandler();
 
 app.UseCorrelationId();

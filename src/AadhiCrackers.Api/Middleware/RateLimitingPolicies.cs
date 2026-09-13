@@ -32,7 +32,7 @@ public static class RateLimitingPolicies
             options.OnRejected = async (context, token) =>
             {
                 var correlationId = context.HttpContext.Items["CorrelationId"]?.ToString() ?? Guid.NewGuid().ToString("N");
-                var ip = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+                var ip = ResolveClientIp(context.HttpContext);
                 var endpoint = context.HttpContext.Request.Path;
 
                 context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
@@ -149,13 +149,13 @@ public static class RateLimitingPolicies
                         QueueLimit = 0
                     }));
 
-            // 7. ORDER CREATE: 10 req / 10 min
+            // 7. ORDER CREATE: 30 req / 10 min per client
             options.AddPolicy(OrderCreate, httpContext =>
                 RateLimitPartition.GetFixedWindowLimiter(
-                    partitionKey: httpContext.User?.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anon",
+                    partitionKey: httpContext.User?.Identity?.Name ?? ResolveClientIp(httpContext),
                     factory: _ => new FixedWindowRateLimiterOptions
                     {
-                        PermitLimit = 10,
+                        PermitLimit = 30,
                         Window = TimeSpan.FromMinutes(10),
                         QueueLimit = 0
                     }));
@@ -221,5 +221,20 @@ public static class RateLimitingPolicies
         });
 
         return services;
+    }
+
+    private static string ResolveClientIp(HttpContext httpContext)
+    {
+        var forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedFor))
+        {
+            var firstIp = forwardedFor.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(firstIp) && IPAddress.TryParse(firstIp, out _))
+            {
+                return firstIp;
+            }
+        }
+
+        return httpContext.Connection.RemoteIpAddress?.ToString() ?? "anon";
     }
 }
