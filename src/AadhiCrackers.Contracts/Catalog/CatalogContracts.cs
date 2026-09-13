@@ -179,7 +179,7 @@ public class ProductFilterRequest
 
     public string? SortBy { get; set; } // price_asc, price_desc, popularity, new, name_asc
     public int Page { get; set; } = 1;
-    public int PageSize { get; set; } = 20;
+    public int PageSize { get; set; } = 1000;
 }
 
 public class CreateProductRequest

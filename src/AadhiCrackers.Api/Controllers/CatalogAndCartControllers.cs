@@ -67,7 +67,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpGet("new-arrivals")]
-    public async Task<ActionResult<ApiResponse<List<ProductDto>>>> GetNewArrivals([FromQuery] int count = 8, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<ApiResponse<List<ProductDto>>>> GetNewArrivals([FromQuery] int count = 1000, CancellationToken cancellationToken = default)
     {
         var products = await _catalogService.GetNewArrivalsAsync(count, cancellationToken);
         return Ok(ApiResponse<List<ProductDto>>.Ok(products, correlationId: _currentUser.CorrelationId));
